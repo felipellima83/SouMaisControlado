@@ -40,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
-  double _monthlyBudget = 3000.0; // Teto de gastos padrão do mês
+  double _monthlyBudget = 3000.0;
 
   @override
   void initState() {
@@ -120,7 +120,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
- void _openTransactionModal([TransactionItem? existingItem]) {
+  void _openTransactionModal([TransactionItem? existingItem]) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -487,111 +487,27 @@ class TransactionFormModal extends StatefulWidget {
     required this.onSaved,
   });
 
-@override
-  Widget build(BuildContext context) {
-    final isEdit = widget.existingItem != null;
-    final mediaQuery = MediaQuery.of(context);
-    final bottomInset = mediaQuery.viewInsets.bottom; // Espaço do teclado
-    final bottomPadding = mediaQuery.viewPadding.bottom; // Barra de navegação/gestos do Android
+  @override
+  State<TransactionFormModal> createState() => _TransactionFormModalState();
+}
 
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(
-          bottom: bottomInset + (bottomPadding > 0 ? bottomPadding : 16),
-          left: 16,
-          right: 16,
-          top: 16,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Text(
-                  isEdit ? 'Editar Lançamento' : 'Novo Lançamento',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SegmentedButton<TransactionType>(
-                segments: const [
-                  ButtonSegment(value: TransactionType.expense, label: Text('Despesa')),
-                  ButtonSegment(value: TransactionType.income, label: Text('Receita')),
-                ],
-                selected: {_type},
-                onSelectionChanged: (newVal) => setState(() => _type = newVal.first),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Descrição (ex: Supermercado, Salário)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _amountController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Valor (R\$)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: _quickCategories.map((cat) {
-                  final isSelected = _categoryController.text.toLowerCase() == (cat['name'] as String).toLowerCase();
-                  return ChoiceChip(
-                    avatar: Icon(cat['icon'] as IconData, size: 16),
-                    label: Text(cat['name'] as String, style: const TextStyle(fontSize: 12)),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      if (selected) {
-                        setState(() => _categoryController.text = cat['name'] as String);
-                      }
-                    },
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _categoryController,
-                decoration: const InputDecoration(
-                  labelText: 'Categoria Selecionada / Personalizada',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 8),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.calendar_today),
-                title: Text('Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'),
-                trailing: TextButton(
-                  onPressed: _pickDate,
-                  child: const Text('Alterar Data'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: _submit,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                child: Text(isEdit ? 'Salvar Alterações' : 'Salvar Lançamento'),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+class _TransactionFormModalState extends State<TransactionFormModal> {
+  late TextEditingController _titleController;
+  late TextEditingController _amountController;
+  late TextEditingController _categoryController;
+  TransactionType _type = TransactionType.expense;
+  late DateTime _chosenDate;
+
+  final List<Map<String, dynamic>> _quickCategories = [
+    {'name': 'Alimentação', 'icon': Icons.restaurant},
+    {'name': 'Transporte', 'icon': Icons.directions_car},
+    {'name': 'Moradia', 'icon': Icons.home},
+    {'name': 'Saúde', 'icon': Icons.local_hospital},
+    {'name': 'Lazer', 'icon': Icons.sports_esports},
+    {'name': 'Compras', 'icon': Icons.shopping_bag},
+    {'name': 'Contas', 'icon': Icons.receipt_long},
+    {'name': 'Salário', 'icon': Icons.account_balance_wallet},
+  ];
 
   @override
   void initState() {
@@ -656,96 +572,105 @@ class TransactionFormModal extends StatefulWidget {
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.existingItem != null;
+    final mediaQuery = MediaQuery.of(context);
+    final bottomInset = mediaQuery.viewInsets.bottom;
+    final bottomPadding = mediaQuery.viewPadding.bottom;
 
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-        left: 16,
-        right: 16,
-        top: 16,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Text(
-                isEdit ? 'Editar Lançamento' : 'Novo Lançamento',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: bottomInset + (bottomPadding > 0 ? bottomPadding : 16),
+          left: 16,
+          right: 16,
+          top: 16,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Text(
+                  isEdit ? 'Editar Lançamento' : 'Novo Lançamento',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            SegmentedButton<TransactionType>(
-              segments: const [
-                ButtonSegment(value: TransactionType.expense, label: Text('Despesa')),
-                ButtonSegment(value: TransactionType.income, label: Text('Receita')),
-              ],
-              selected: {_type},
-              onSelectionChanged: (newVal) => setState(() => _type = newVal.first),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                labelText: 'Descrição (ex: Supermercado, Salário)',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 12),
+              SegmentedButton<TransactionType>(
+                segments: const [
+                  ButtonSegment(value: TransactionType.expense, label: Text('Despesa')),
+                  ButtonSegment(value: TransactionType.income, label: Text('Receita')),
+                ],
+                selected: {_type},
+                onSelectionChanged: (newVal) => setState(() => _type = newVal.first),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _amountController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Valor (R\$)',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  labelText: 'Descrição (ex: Supermercado, Salário)',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: _quickCategories.map((cat) {
-                final isSelected = _categoryController.text.toLowerCase() == (cat['name'] as String).toLowerCase();
-                return ChoiceChip(
-                  avatar: Icon(cat['icon'] as IconData, size: 16),
-                  label: Text(cat['name'] as String, style: const TextStyle(fontSize: 12)),
-                  selected: isSelected,
-                  onSelected: (selected) {
-                    if (selected) {
-                      setState(() => _categoryController.text = cat['name'] as String);
-                    }
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _categoryController,
-              decoration: const InputDecoration(
-                labelText: 'Categoria Selecionada / Personalizada',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _amountController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Valor (R\$)',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.calendar_today),
-              title: Text('Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'),
-              trailing: TextButton(
-                onPressed: _pickDate,
-                child: const Text('Alterar Data'),
+              const SizedBox(height: 12),
+              const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: _quickCategories.map((cat) {
+                  final isSelected =
+                      _categoryController.text.toLowerCase() == (cat['name'] as String).toLowerCase();
+                  return ChoiceChip(
+                    avatar: Icon(cat['icon'] as IconData, size: 16),
+                    label: Text(cat['name'] as String, style: const TextStyle(fontSize: 12)),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() => _categoryController.text = cat['name'] as String);
+                      }
+                    },
+                  );
+                }).toList(),
               ),
-            ),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: _submit,
-              style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-              child: Text(isEdit ? 'Salvar Alterações' : 'Salvar Lançamento'),
-            ),
-          ],
+              const SizedBox(height: 8),
+              TextField(
+                controller: _categoryController,
+                decoration: const InputDecoration(
+                  labelText: 'Categoria Selecionada / Personalizada',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.calendar_today),
+                title: Text('Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'),
+                trailing: TextButton(
+                  onPressed: _pickDate,
+                  child: const Text('Alterar Data'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _submit,
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
+                child: Text(isEdit ? 'Salvar Alterações' : 'Salvar Lançamento'),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
         ),
       ),
     );
