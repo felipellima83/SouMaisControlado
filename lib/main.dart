@@ -124,7 +124,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Minhas Finanças'),
+        title: const Text('Sou Mais Controlado'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
