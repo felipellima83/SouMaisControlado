@@ -14,7 +14,7 @@ class FinanceApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Controle Financeiro',
+      title: 'Sou Mais Controlado',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
