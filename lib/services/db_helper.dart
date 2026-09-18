@@ -20,7 +20,7 @@ class DBHelper {
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -35,6 +35,7 @@ class DBHelper {
         date TEXT NOT NULL,
         category TEXT NOT NULL,
         account TEXT NOT NULL DEFAULT 'Conta Principal',
+        groupId TEXT,
         type TEXT NOT NULL
       )
     ''');
@@ -44,11 +45,23 @@ class DBHelper {
     if (oldVersion < 2) {
       await db.execute("ALTER TABLE transactions ADD COLUMN account TEXT NOT NULL DEFAULT 'Conta Principal'");
     }
+    if (oldVersion < 3) {
+      await db.execute("ALTER TABLE transactions ADD COLUMN groupId TEXT");
+    }
   }
 
   Future<int> insertTransaction(TransactionItem item) async {
     final db = await instance.database;
     return await db.insert('transactions', item.toMap());
+  }
+
+  Future<void> insertMultipleTransactions(List<TransactionItem> items) async {
+    final db = await instance.database;
+    final batch = db.batch();
+    for (final item in items) {
+      batch.insert('transactions', item.toMap());
+    }
+    await batch.commit(noResult: true);
   }
 
   Future<int> updateTransaction(TransactionItem item) async {
@@ -72,7 +85,26 @@ class DBHelper {
     return await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
-  // Renomeia todas as transações associadas à conta
+  // Exclui toda a série desde o início
+  Future<int> deleteGroupAll(String groupId) async {
+    final db = await instance.database;
+    return await db.delete(
+      'transactions',
+      where: 'groupId = ?',
+      whereArgs: [groupId],
+    );
+  }
+
+  // Exclui a série a partir de uma data em diante
+  Future<int> deleteGroupFromDate(String groupId, DateTime fromDate) async {
+    final db = await instance.database;
+    return await db.delete(
+      'transactions',
+      where: 'groupId = ? AND date >= ?',
+      whereArgs: [groupId, fromDate.toIso8601String()],
+    );
+  }
+
   Future<int> renameAccount(String oldName, String newName) async {
     final db = await instance.database;
     return await db.rawUpdate(
@@ -81,7 +113,6 @@ class DBHelper {
     );
   }
 
-  // Exclui a conta e todas as transações vinculadas em cascata
   Future<int> deleteAccountAndTransactions(String accountName) async {
     final db = await instance.database;
     return await db.delete(
