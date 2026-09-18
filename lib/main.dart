@@ -221,26 +221,94 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _deleteTransaction(TransactionItem item) async {
-    if (item.id != null) {
-      await DBHelper.instance.deleteTransaction(item.id!);
-      _refreshTransactions();
+  // Manipulador de exclusão inteligente (com suporte a séries)
+  void _confirmDeleteTransaction(TransactionItem item) {
+    if (item.id == null) return;
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Lançamento "${item.title}" removido.'),
-          action: SnackBarAction(
-            label: 'Desfazer',
-            onPressed: () async {
-              await DBHelper.instance.insertTransaction(item);
+    if (item.groupId == null) {
+      // Transação avulsa: exclusão direta
+      _executeSingleDelete(item);
+      return;
+    }
+
+    // Se tiver groupId, abre opções de exclusão de série
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Excluir Repetição'),
+        content: Text(
+          'O lançamento "${item.title}" faz parte de uma série (parcelada ou mensal fixa).\n\nComo deseja excluir?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.delete_outline),
+            title: const Text('Apenas este lançamento'),
+            subtitle: const Text('Remove somente a parcela/mês selecionado'),
+            onTap: () async {
+              Navigator.of(ctx).pop();
+              await DBHelper.instance.deleteTransaction(item.id!);
               _refreshTransactions();
+              _showSnackBar('Lançamento removido.');
             },
           ),
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.arrow_forward),
+            title: const Text('Deste em diante'),
+            subtitle: const Text('Mantém os meses anteriores e apaga os futuros'),
+            onTap: () async {
+              Navigator.of(ctx).pop();
+              await DBHelper.instance.deleteGroupFromDate(item.groupId!, item.date);
+              _refreshTransactions();
+              _showSnackBar('Lançamentos futuros removidos.');
+            },
+          ),
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.delete_forever, color: Colors.redAccent),
+            title: const Text('Todas as repetições (Desde o início)', style: TextStyle(color: Colors.redAccent)),
+            subtitle: const Text('Apaga a série completa em todos os meses'),
+            onTap: () async {
+              Navigator.of(ctx).pop();
+              await DBHelper.instance.deleteGroupAll(item.groupId!);
+              _refreshTransactions();
+              _showSnackBar('Série completa removida.');
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _executeSingleDelete(TransactionItem item) async {
+    await DBHelper.instance.deleteTransaction(item.id!);
+    _refreshTransactions();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Lançamento "${item.title}" removido.'),
+        action: SnackBarAction(
+          label: 'Desfazer',
+          onPressed: () async {
+            await DBHelper.instance.insertTransaction(item);
+            _refreshTransactions();
+          },
         ),
-      );
-    }
+      ),
+    );
+  }
+
+  void _showSnackBar(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   void _openTransactionModal([TransactionItem? existingItem]) {
@@ -262,7 +330,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Abre a tela modal de Gerenciamento de Contas e Cartões
   void _openManageAccountsDialog() {
     showModalBottomSheet(
       context: context,
@@ -342,7 +409,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Diálogo para renomear conta e atualizar transações em cascata
   void _showEditAccountDialog(String oldName, VoidCallback onUpdatedModal) {
     final controller = TextEditingController(text: oldName);
     showDialog(
@@ -381,7 +447,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Diálogo com aviso explícito de exclusão em cascata
   void _showDeleteAccountDialog(String accountName, int transactionsCount, VoidCallback onUpdatedModal) {
     showDialog(
       context: context,
@@ -429,9 +494,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (format == 'csv') {
         final file = File('${dir.path}/backup_financas_$nowStr.csv');
         final buffer = StringBuffer();
-        buffer.writeln('ID,Título,Valor,Data,Categoria,Conta_Cartao,Tipo');
+        buffer.writeln('ID,Título,Valor,Data,Categoria,Conta_Cartao,GroupId,Tipo');
         for (final t in _allTransactions) {
-          buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}","${t.account}",${t.type.name}');
+          buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}","${t.account}","${t.groupId ?? ''}",${t.type.name}');
         }
         await file.writeAsString(buffer.toString());
         if (!mounted) return;
@@ -691,17 +756,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   final item = _filteredTransactions[index];
                   final isIncome = item.type == TransactionType.income;
                   final categoryIcon = _getCategoryIcon(item.category);
+                  final isRecurringOrInstallment = item.groupId != null;
 
                   return Dismissible(
-                    key: Key('${item.id}_${item.title}'),
+                    key: Key('${item.id}_${item.title}_${item.date.toIso8601String()}'),
                     direction: DismissDirection.endToStart,
+                    confirmDismiss: (direction) async {
+                      _confirmDeleteTransaction(item);
+                      return false; // O diálogo cuida da remoção
+                    },
                     background: Container(
                       alignment: Alignment.centerRight,
                       padding: const EdgeInsets.only(right: 20),
                       color: Colors.redAccent.withOpacity(0.8),
                       child: const Icon(Icons.delete, color: Colors.white),
                     ),
-                    onDismissed: (direction) => _deleteTransaction(item),
                     child: ListTile(
                       onTap: () => _openTransactionModal(item),
                       leading: CircleAvatar(
@@ -714,16 +783,40 @@ class _HomeScreenState extends State<HomeScreen> {
                           size: 20,
                         ),
                       ),
-                      title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w500)),
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w500)),
+                          ),
+                          if (isRecurringOrInstallment)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 4.0),
+                              child: Icon(
+                                Icons.repeat,
+                                size: 14,
+                                color: Colors.teal.shade200,
+                              ),
+                            ),
+                        ],
+                      ),
                       subtitle: Text(
                           '${item.category} • ${item.account}\n${DateFormat('dd/MM/yyyy').format(item.date)}'),
-                      trailing: Text(
-                        '${isIncome ? '+' : '-'} ${formatCurrency.format(item.amount)}',
-                        style: TextStyle(
-                          color: isIncome ? Colors.green : Colors.redAccent,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                        ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${isIncome ? '+' : '-'} ${formatCurrency.format(item.amount)}',
+                            style: TextStyle(
+                              color: isIncome ? Colors.green : Colors.redAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
+                            onPressed: () => _confirmDeleteTransaction(item),
+                          ),
+                        ],
                       ),
                     ),
                   );
@@ -1071,9 +1164,13 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
   TransactionType _type = TransactionType.expense;
   late DateTime _chosenDate;
 
+  // Parcelado
   bool _isInstallment = false;
   int _installmentsCount = 2;
   bool _amountIsTotal = true;
+
+  // Recorrente Indefinido (Fixo)
+  bool _isRecurring = false;
 
   final List<Map<String, dynamic>> _quickCategories = [
     {'name': 'Alimentação', 'icon': Icons.restaurant},
@@ -1178,28 +1275,55 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
         date: _chosenDate,
         category: category,
         account: _selectedAccount,
+        groupId: widget.existingItem!.groupId,
         type: _type,
       );
       await DBHelper.instance.updateTransaction(item);
     } else {
-      if (_type == TransactionType.expense && _isInstallment && _installmentsCount > 1) {
+      final generatedGroupId = DateTime.now().millisecondsSinceEpoch.toString();
+
+      if (_isRecurring) {
+        // Projeta repetição indefinida (24 meses com mesmo groupId)
+        final items = <TransactionItem>[];
+        for (int i = 0; i < 24; i++) {
+          final recurDate = _addMonths(_chosenDate, i);
+          items.add(
+            TransactionItem(
+              title: title,
+              amount: rawAmount,
+              date: recurDate,
+              category: category,
+              account: _selectedAccount,
+              groupId: generatedGroupId,
+              type: _type,
+            ),
+          );
+        }
+        await DBHelper.instance.insertMultipleTransactions(items);
+      } else if (_type == TransactionType.expense && _isInstallment && _installmentsCount > 1) {
+        // Parcelamento fixo com groupId
         final installmentAmount = _amountIsTotal
             ? double.parse((rawAmount / _installmentsCount).toStringAsFixed(2))
             : rawAmount;
 
+        final items = <TransactionItem>[];
         for (int i = 1; i <= _installmentsCount; i++) {
           final installmentDate = _addMonths(_chosenDate, i - 1);
-          final item = TransactionItem(
-            title: '$title ($i/$_installmentsCount)',
-            amount: installmentAmount,
-            date: installmentDate,
-            category: category,
-            account: _selectedAccount,
-            type: TransactionType.expense,
+          items.add(
+            TransactionItem(
+              title: '$title ($i/$_installmentsCount)',
+              amount: installmentAmount,
+              date: installmentDate,
+              category: category,
+              account: _selectedAccount,
+              groupId: generatedGroupId,
+              type: TransactionType.expense,
+            ),
           );
-          await DBHelper.instance.insertTransaction(item);
         }
+        await DBHelper.instance.insertMultipleTransactions(items);
       } else {
+        // Lançamento comum avulso
         final item = TransactionItem(
           title: title,
           amount: rawAmount,
@@ -1262,7 +1386,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               TextField(
                 controller: _titleController,
                 decoration: const InputDecoration(
-                  labelText: 'Descrição (ex: Supermercado, Almoço)',
+                  labelText: 'Descrição (ex: Aluguel, Salário, Celular)',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -1309,60 +1433,79 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   ),
                 ],
               ),
-              if (_type == TransactionType.expense && !isEdit) ...[
+
+              if (!isEdit) ...[
                 const SizedBox(height: 8),
+                // Opção 1: Repetir Mensalmente (Fixo)
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Compra Parcelada?', style: TextStyle(fontWeight: FontWeight.w500)),
-                  subtitle: Text(_isInstallment ? 'Dividir em múltiplos meses' : 'Lançamento à vista'),
-                  value: _isInstallment,
-                  onChanged: (val) => setState(() => _isInstallment = val),
+                  title: const Text('Repetir todo mês (Fixo)', style: TextStyle(fontWeight: FontWeight.w500)),
+                  subtitle: const Text('Projeta despesa ou receita recorrente'),
+                  value: _isRecurring,
+                  onChanged: (val) {
+                    setState(() {
+                      _isRecurring = val;
+                      if (val) _isInstallment = false;
+                    });
+                  },
                 ),
-                if (_isInstallment) ...[
-                  Row(
-                    children: [
-                      const Text('Número de parcelas: ', style: TextStyle(fontSize: 13)),
-                      const SizedBox(width: 8),
-                      DropdownButton<int>(
-                        value: _installmentsCount,
-                        dropdownColor: Colors.grey[900],
-                        items: List.generate(35, (index) => index + 2).map((num) {
-                          return DropdownMenuItem<int>(
-                            value: num,
-                            child: Text('${num}x', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          );
-                        }).toList(),
-                        onChanged: (val) {
-                          if (val != null) setState(() => _installmentsCount = val);
-                        },
-                      ),
-                    ],
+
+                // Opção 2: Compra Parcelada (somente para despesas)
+                if (_type == TransactionType.expense && !_isRecurring) ...[
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Compra Parcelada?', style: TextStyle(fontWeight: FontWeight.w500)),
+                    subtitle: Text(_isInstallment ? 'Dividir em múltiplos meses' : 'Lançamento à vista'),
+                    value: _isInstallment,
+                    onChanged: (val) => setState(() => _isInstallment = val),
                   ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: RadioListTile<bool>(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('Valor Total', style: TextStyle(fontSize: 12)),
-                          value: true,
-                          groupValue: _amountIsTotal,
-                          onChanged: (val) => setState(() => _amountIsTotal = val!),
+                  if (_isInstallment) ...[
+                    Row(
+                      children: [
+                        const Text('Número de parcelas: ', style: TextStyle(fontSize: 13)),
+                        const SizedBox(width: 8),
+                        DropdownButton<int>(
+                          value: _installmentsCount,
+                          dropdownColor: Colors.grey[900],
+                          items: List.generate(35, (index) => index + 2).map((num) {
+                            return DropdownMenuItem<int>(
+                              value: num,
+                              child: Text('${num}x', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) setState(() => _installmentsCount = val);
+                          },
                         ),
-                      ),
-                      Expanded(
-                        child: RadioListTile<bool>(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('Valor da Parcela', style: TextStyle(fontSize: 12)),
-                          value: false,
-                          groupValue: _amountIsTotal,
-                          onChanged: (val) => setState(() => _amountIsTotal = val!),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: RadioListTile<bool>(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Valor Total', style: TextStyle(fontSize: 12)),
+                            value: true,
+                            groupValue: _amountIsTotal,
+                            onChanged: (val) => setState(() => _amountIsTotal = val!),
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 16),
+                        Expanded(
+                          child: RadioListTile<bool>(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Valor da Parcela', style: TextStyle(fontSize: 12)),
+                            value: false,
+                            groupValue: _amountIsTotal,
+                            onChanged: (val) => setState(() => _amountIsTotal = val!),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 16),
+                  ],
                 ],
               ],
+
               const SizedBox(height: 8),
               const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 6),
@@ -1399,7 +1542,9 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 title: Text(
                   _isInstallment
                       ? '1ª Parcela em: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'
-                      : 'Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}',
+                      : (_isRecurring
+                          ? 'Início em: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'
+                          : 'Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'),
                 ),
                 trailing: TextButton(
                   onPressed: _pickDate,
@@ -1415,9 +1560,11 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 child: Text(
                   isEdit
                       ? 'Salvar Alterações'
-                      : (_isInstallment
-                          ? 'Gerar $_installmentsCount Parcelas'
-                          : 'Salvar Lançamento'),
+                      : (_isRecurring
+                          ? 'Salvar Lançamento Recorrente'
+                          : (_isInstallment
+                              ? 'Gerar $_installmentsCount Parcelas'
+                              : 'Salvar Lançamento')),
                 ),
               ),
               const SizedBox(height: 12),
