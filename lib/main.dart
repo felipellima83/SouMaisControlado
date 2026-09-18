@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:quick_actions/quick_actions.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
@@ -42,12 +43,33 @@ class AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<AuthGate> {
   final LocalAuthentication _auth = LocalAuthentication();
+  final QuickActions _quickActions = const QuickActions();
   bool _isAuthenticated = false;
+  bool _openNewExpenseOnStart = false;
 
   @override
   void initState() {
     super.initState();
+    _setupQuickActions();
     _checkBiometrics();
+  }
+
+  void _setupQuickActions() {
+    _quickActions.initialize((shortcutType) {
+      if (shortcutType == 'action_new_expense') {
+        setState(() {
+          _openNewExpenseOnStart = true;
+        });
+      }
+    });
+
+    _quickActions.setShortcutItems(<ShortcutItem>[
+      const ShortcutItem(
+        type: 'action_new_expense',
+        localizedTitle: 'Nova Despesa',
+        icon: 'ic_launcher',
+      ),
+    ]);
   }
 
   Future<void> _checkBiometrics() async {
@@ -79,7 +101,7 @@ class _AuthGateState extends State<AuthGate> {
   @override
   Widget build(BuildContext context) {
     if (_isAuthenticated) {
-      return const HomeScreen();
+      return HomeScreen(autoOpenNewExpense: _openNewExpenseOnStart);
     }
 
     return Scaffold(
@@ -117,7 +139,8 @@ class _AuthGateState extends State<AuthGate> {
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final bool autoOpenNewExpense;
+  const HomeScreen({super.key, this.autoOpenNewExpense = false});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -131,6 +154,11 @@ class _HomeScreenState extends State<HomeScreen> {
   double _monthlyBudget = 3000.0;
   String _selectedAccountFilter = 'Todas';
 
+  // Busca rápida
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
   final List<String> _customAccounts = [
     'Conta Principal',
     'Carteira / Dinheiro',
@@ -140,7 +168,13 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _refreshTransactions();
+    _refreshTransactions().then((_) {
+      if (widget.autoOpenNewExpense) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _openTransactionModal();
+        });
+      }
+    });
   }
 
   Future<void> _refreshTransactions() async {
@@ -172,7 +206,14 @@ class _HomeScreenState extends State<HomeScreen> {
     return _allTransactions.where((t) {
       final matchesMonth = t.date.year == _selectedMonth.year && t.date.month == _selectedMonth.month;
       final matchesAccount = _selectedAccountFilter == 'Todas' || t.account == _selectedAccountFilter;
-      return matchesMonth && matchesAccount;
+
+      final query = _searchQuery.trim().toLowerCase();
+      final matchesSearch = query.isEmpty ||
+          t.title.toLowerCase().contains(query) ||
+          t.category.toLowerCase().contains(query) ||
+          t.account.toLowerCase().contains(query);
+
+      return matchesMonth && matchesAccount && matchesSearch;
     }).toList();
   }
 
@@ -521,8 +562,36 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Sou Mais Controlado', style: TextStyle(fontSize: 18)),
+        title: _isSearching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                style: const TextStyle(fontSize: 16),
+                decoration: const InputDecoration(
+                  hintText: 'Buscar por título, categoria ou conta...',
+                  border: InputBorder.none,
+                ),
+                onChanged: (val) {
+                  setState(() => _searchQuery = val);
+                },
+              )
+            : const Text('Sou Mais Controlado', style: TextStyle(fontSize: 18)),
         actions: [
+          IconButton(
+            icon: Icon(_isSearching ? Icons.close : Icons.search, size: 22),
+            tooltip: _isSearching ? 'Fechar busca' : 'Buscar',
+            onPressed: () {
+              setState(() {
+                if (_isSearching) {
+                  _isSearching = false;
+                  _searchController.clear();
+                  _searchQuery = '';
+                } else {
+                  _isSearching = true;
+                }
+              });
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.track_changes, size: 20),
             onPressed: _showSetBudgetDialog,
@@ -572,12 +641,15 @@ class _HomeScreenState extends State<HomeScreen> {
         _buildBudgetProgressBar(formatCurrency),
 
         if (grouped.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(32.0),
+          Padding(
+            padding: const EdgeInsets.all(32.0),
             child: Center(
               child: Text(
-                'Nenhum lançamento neste mês para o filtro selecionado.',
-                style: TextStyle(color: Colors.grey, fontSize: 13),
+                _searchQuery.isNotEmpty
+                    ? 'Nenhum lançamento encontrado para "$_searchQuery".'
+                    : 'Nenhum lançamento neste mês para o filtro selecionado.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.grey, fontSize: 13),
               ),
             ),
           )
@@ -875,6 +947,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// Opções de Tipo no Formulário: Despesa, Receita ou Transferência
+enum FormMode { expense, income, transfer }
+
 class TransactionFormModal extends StatefulWidget {
   final DateTime defaultDate;
   final TransactionItem? existingItem;
@@ -902,7 +977,8 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
   late TextEditingController _amountController;
   late TextEditingController _categoryController;
   late String _selectedAccount;
-  TransactionType _type = TransactionType.expense;
+  late String _destinationAccount;
+  FormMode _formMode = FormMode.expense;
   late DateTime _chosenDate;
   bool _isCompleted = true;
 
@@ -932,7 +1008,8 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       _amountController = TextEditingController(text: item.amount.toStringAsFixed(2));
       _categoryController = TextEditingController(text: item.category);
       _selectedAccount = item.account;
-      _type = item.type;
+      _destinationAccount = widget.availableAccounts.firstWhere((a) => a != item.account, orElse: () => 'Carteira / Dinheiro');
+      _formMode = item.type == TransactionType.income ? FormMode.income : FormMode.expense;
       _chosenDate = item.date;
       _isCompleted = item.isCompleted;
     } else {
@@ -940,6 +1017,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       _amountController = TextEditingController();
       _categoryController = TextEditingController(text: 'Alimentação');
       _selectedAccount = widget.availableAccounts.isNotEmpty ? widget.availableAccounts.first : 'Conta Principal';
+      _destinationAccount = widget.availableAccounts.length > 1 ? widget.availableAccounts[1] : 'Carteira / Dinheiro';
       final now = DateTime.now();
       _chosenDate = (widget.defaultDate.year == now.year && widget.defaultDate.month == now.month)
           ? now
@@ -998,13 +1076,61 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
   }
 
   void _submit() async {
-    final title = _titleController.text.trim();
     final rawAmount = double.tryParse(_amountController.text.replaceAll(',', '.')) ?? 0.0;
-    final category = _categoryController.text.trim();
-
-    if (title.isEmpty || rawAmount <= 0 || category.isEmpty) return;
+    if (rawAmount <= 0) return;
 
     final isEdit = widget.existingItem != null;
+
+    // Caso seja TRANSFERÊNCIA
+    if (_formMode == FormMode.transfer && !isEdit) {
+      if (_selectedAccount == _destinationAccount) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('A conta de origem e destino não podem ser iguais.')),
+        );
+        return;
+      }
+
+      final transferTitle = _titleController.text.trim().isEmpty
+          ? 'Transferência: $_selectedAccount ➔ $_destinationAccount'
+          : _titleController.text.trim();
+
+      final groupId = DateTime.now().millisecondsSinceEpoch.toString();
+
+      // Saída da conta de origem (Expense)
+      final outItem = TransactionItem(
+        title: transferTitle,
+        amount: rawAmount,
+        date: _chosenDate,
+        category: 'Transferência',
+        account: _selectedAccount,
+        groupId: groupId,
+        isCompleted: _isCompleted,
+        type: TransactionType.expense,
+      );
+
+      // Entrada na conta de destino (Income)
+      final inItem = TransactionItem(
+        title: transferTitle,
+        amount: rawAmount,
+        date: _chosenDate,
+        category: 'Transferência',
+        account: _destinationAccount,
+        groupId: groupId,
+        isCompleted: _isCompleted,
+        type: TransactionType.income,
+      );
+
+      await DBHelper.instance.insertMultipleTransactions([outItem, inItem]);
+      widget.onSaved();
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+
+    final title = _titleController.text.trim();
+    final category = _categoryController.text.trim();
+    if (title.isEmpty || category.isEmpty) return;
+
+    final type = _formMode == FormMode.income ? TransactionType.income : TransactionType.expense;
 
     if (isEdit) {
       final item = TransactionItem(
@@ -1016,7 +1142,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
         account: _selectedAccount,
         groupId: widget.existingItem!.groupId,
         isCompleted: _isCompleted,
-        type: _type,
+        type: type,
       );
       await DBHelper.instance.updateTransaction(item);
     } else {
@@ -1035,12 +1161,12 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               account: _selectedAccount,
               groupId: generatedGroupId,
               isCompleted: i == 0 ? _isCompleted : false,
-              type: _type,
+              type: type,
             ),
           );
         }
         await DBHelper.instance.insertMultipleTransactions(items);
-      } else if (_type == TransactionType.expense && _isInstallment && _installmentsCount > 1) {
+      } else if (type == TransactionType.expense && _isInstallment && _installmentsCount > 1) {
         final installmentAmount = _amountIsTotal
             ? double.parse((rawAmount / _installmentsCount).toStringAsFixed(2))
             : rawAmount;
@@ -1070,7 +1196,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
           category: category,
           account: _selectedAccount,
           isCompleted: _isCompleted,
-          type: _type,
+          type: type,
         );
         await DBHelper.instance.insertTransaction(item);
       }
@@ -1107,23 +1233,34 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 ),
               ),
               const SizedBox(height: 10),
-              SegmentedButton<TransactionType>(
-                segments: const [
-                  ButtonSegment(value: TransactionType.expense, label: Text('Despesa')),
-                  ButtonSegment(value: TransactionType.income, label: Text('Receita')),
-                ],
-                selected: {_type},
-                onSelectionChanged: (newVal) {
-                  setState(() {
-                    _type = newVal.first;
-                    if (_type == TransactionType.income) _isInstallment = false;
-                  });
-                },
+
+              // Seletor com 3 Modos: Despesa, Receita ou Transferência
+              Center(
+                child: SegmentedButton<FormMode>(
+                  segments: [
+                    const ButtonSegment(value: FormMode.expense, label: Text('Despesa', style: TextStyle(fontSize: 12))),
+                    const ButtonSegment(value: FormMode.income, label: Text('Receita', style: TextStyle(fontSize: 12))),
+                    if (!isEdit)
+                      const ButtonSegment(value: FormMode.transfer, label: Text('Transf.', style: TextStyle(fontSize: 12))),
+                  ],
+                  selected: {_formMode},
+                  onSelectionChanged: (newVal) {
+                    setState(() {
+                      _formMode = newVal.first;
+                      if (_formMode != FormMode.expense) _isInstallment = false;
+                      if (_formMode == FormMode.transfer) _isRecurring = false;
+                    });
+                  },
+                ),
               ),
               const SizedBox(height: 10),
+
               TextField(
                 controller: _titleController,
-                decoration: const InputDecoration(labelText: 'Descrição', border: OutlineInputBorder()),
+                decoration: InputDecoration(
+                  labelText: _formMode == FormMode.transfer ? 'Descrição (Opcional)' : 'Descrição',
+                  border: const OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 10),
               TextField(
@@ -1137,42 +1274,90 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 ),
               ),
               const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: widget.availableAccounts.contains(_selectedAccount)
-                          ? _selectedAccount
-                          : widget.availableAccounts.first,
-                      decoration: const InputDecoration(
-                        labelText: 'Conta ou Cartão',
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+
+              // Se for Transferência, exibe Conta Origem e Conta Destino
+              if (_formMode == FormMode.transfer) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: widget.availableAccounts.contains(_selectedAccount)
+                            ? _selectedAccount
+                            : widget.availableAccounts.first,
+                        decoration: const InputDecoration(
+                          labelText: 'Conta Origem (Sai)',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        ),
+                        items: widget.availableAccounts.map((acc) {
+                          return DropdownMenuItem<String>(value: acc, child: Text(acc, style: const TextStyle(fontSize: 12)));
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setState(() => _selectedAccount = val);
+                        },
                       ),
-                      items: widget.availableAccounts.map((acc) {
-                        return DropdownMenuItem<String>(value: acc, child: Text(acc));
-                      }).toList(),
-                      onChanged: (val) {
-                        if (val != null) setState(() => _selectedAccount = val);
-                      },
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filledTonal(
-                    onPressed: _showNewAccountDialog,
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
-              ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: widget.availableAccounts.contains(_destinationAccount)
+                            ? _destinationAccount
+                            : widget.availableAccounts.last,
+                        decoration: const InputDecoration(
+                          labelText: 'Conta Destino (Entra)',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        ),
+                        items: widget.availableAccounts.map((acc) {
+                          return DropdownMenuItem<String>(value: acc, child: Text(acc, style: const TextStyle(fontSize: 12)));
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setState(() => _destinationAccount = val);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: widget.availableAccounts.contains(_selectedAccount)
+                            ? _selectedAccount
+                            : widget.availableAccounts.first,
+                        decoration: const InputDecoration(
+                          labelText: 'Conta ou Cartão',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        ),
+                        items: widget.availableAccounts.map((acc) {
+                          return DropdownMenuItem<String>(value: acc, child: Text(acc));
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setState(() => _selectedAccount = val);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      onPressed: _showNewAccountDialog,
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+              ],
+
               const SizedBox(height: 6),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Lançamento Efetivado / Pago', style: TextStyle(fontSize: 13)),
+                title: const Text('Lançamento Efetivado / Concluído', style: TextStyle(fontSize: 13)),
                 value: _isCompleted,
                 activeColor: Colors.teal,
                 onChanged: (val) => setState(() => _isCompleted = val ?? true),
               ),
-              if (!isEdit) ...[
+
+              if (!isEdit && _formMode != FormMode.transfer) ...[
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Repetir todo mês (Fixo)', style: TextStyle(fontSize: 13)),
@@ -1184,7 +1369,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                     });
                   },
                 ),
-                if (_type == TransactionType.expense && !_isRecurring) ...[
+                if (_formMode == FormMode.expense && !_isRecurring) ...[
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Compra Parcelada?', style: TextStyle(fontSize: 13)),
@@ -1232,27 +1417,31 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   ],
                 ],
               ],
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: _quickCategories.map((cat) {
-                  final isSelected = _categoryController.text.toLowerCase() == cat.toLowerCase();
-                  return ChoiceChip(
-                    visualDensity: VisualDensity.compact,
-                    label: Text(cat, style: const TextStyle(fontSize: 11)),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      if (selected) setState(() => _categoryController.text = cat);
-                    },
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _categoryController,
-                decoration: const InputDecoration(labelText: 'Categoria', border: OutlineInputBorder()),
-              ),
+
+              if (_formMode != FormMode.transfer) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: _quickCategories.map((cat) {
+                    final isSelected = _categoryController.text.toLowerCase() == cat.toLowerCase();
+                    return ChoiceChip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(cat, style: const TextStyle(fontSize: 11)),
+                      selected: isSelected,
+                      onSelected: (selected) {
+                        if (selected) setState(() => _categoryController.text = cat);
+                      },
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _categoryController,
+                  decoration: const InputDecoration(labelText: 'Categoria', border: OutlineInputBorder()),
+                ),
+              ],
+
               const SizedBox(height: 8),
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -1294,7 +1483,15 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 ElevatedButton(
                   onPressed: _submit,
                   style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
-                  child: const Text('Salvar Lançamento'),
+                  child: Text(
+                    _formMode == FormMode.transfer
+                        ? 'Realizar Transferência'
+                        : (_isRecurring
+                            ? 'Salvar Lançamento Recorrente'
+                            : (_isInstallment
+                                ? 'Gerar $_installmentsCount Parcelas'
+                                : 'Salvar Lançamento')),
+                  ),
                 ),
             ],
           ),
