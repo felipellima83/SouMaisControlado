@@ -63,4 +63,14 @@ class DBHelper {
     final db = await instance.database;
     return await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
+
+  Future<void> replaceAllTransactions(List<TransactionItem> items) async {
+    final db = await instance.database;
+    await db.transaction((txn) async {
+      await txn.delete('transactions');
+      for (final item in items) {
+        await txn.insert('transactions', item.toMap());
+      }
+    });
+  }
 }
