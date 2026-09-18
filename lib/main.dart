@@ -131,6 +131,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _errorMessage;
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
   double _monthlyBudget = 3000.0;
+  String _selectedAccountFilter = 'Todas'; // Filtro de contas
+
+  final List<String> _customAccounts = [
+    'Conta Principal',
+    'Carteira / Dinheiro',
+    'Cartão de Crédito',
+  ];
 
   @override
   void initState() {
@@ -146,6 +153,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final data = await DBHelper.instance.getAllTransactions();
+      // Atualiza lista de contas disponíveis com o que já foi cadastrado
+      for (final item in data) {
+        if (!_customAccounts.contains(item.account)) {
+          _customAccounts.add(item.account);
+        }
+      }
       setState(() {
         _allTransactions = data;
         _isLoading = false;
@@ -158,15 +171,23 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Filtro conjunto de Mês e Conta/Cartão
   List<TransactionItem> get _filteredTransactions {
     return _allTransactions.where((t) {
-      return t.date.year == _selectedMonth.year && t.date.month == _selectedMonth.month;
+      final matchesMonth = t.date.year == _selectedMonth.year && t.date.month == _selectedMonth.month;
+      final matchesAccount = _selectedAccountFilter == 'Todas' || t.account == _selectedAccountFilter;
+      return matchesMonth && matchesAccount;
     }).toList();
   }
 
+  // Acumulado de meses anteriores respeitando a conta selecionada
   double get _accumulatedPreviousBalance {
     final firstDayOfSelectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month, 1);
-    final previousTransactions = _allTransactions.where((t) => t.date.isBefore(firstDayOfSelectedMonth));
+    final previousTransactions = _allTransactions.where((t) {
+      final isBefore = t.date.isBefore(firstDayOfSelectedMonth);
+      final matchesAccount = _selectedAccountFilter == 'Todas' || t.account == _selectedAccountFilter;
+      return isBefore && matchesAccount;
+    });
 
     double income = previousTransactions
         .where((t) => t.type == TransactionType.income)
@@ -233,6 +254,12 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (ctx) => TransactionFormModal(
         defaultDate: _selectedMonth,
         existingItem: existingItem,
+        availableAccounts: _customAccounts,
+        onAccountCreated: (newAcc) {
+          if (!_customAccounts.contains(newAcc)) {
+            setState(() => _customAccounts.add(newAcc));
+          }
+        },
         onSaved: _refreshTransactions,
       ),
     );
@@ -253,9 +280,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (format == 'csv') {
         final file = File('${dir.path}/backup_financas_$nowStr.csv');
         final buffer = StringBuffer();
-        buffer.writeln('ID,Título,Valor,Data,Categoria,Tipo');
+        buffer.writeln('ID,Título,Valor,Data,Categoria,Conta_Cartao,Tipo');
         for (final t in _allTransactions) {
-          buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}",${t.type.name}');
+          buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}","${t.account}",${t.type.name}');
         }
         await file.writeAsString(buffer.toString());
         if (!mounted) return;
@@ -380,6 +407,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  IconData _getAccountIcon(String account) {
+    final acc = account.toLowerCase();
+    if (acc.contains('cartão') || acc.contains('cartao') || acc.contains('crédito')) {
+      return Icons.credit_card;
+    }
+    if (acc.contains('carteira') || acc.contains('dinheiro')) {
+      return Icons.wallet;
+    }
+    return Icons.account_balance;
+  }
+
   @override
   Widget build(BuildContext context) {
     final formatCurrency = NumberFormat.simpleCurrency(locale: 'pt_BR');
@@ -444,21 +482,33 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    final allAccountsList = ['Todas', ..._customAccounts];
+
     return ListView(
       padding: EdgeInsets.zero,
       children: [
         _buildMonthSelector(monthFormat),
+        _buildAccountFilterBar(allAccountsList),
         _buildConsolidatedSummaryCard(formatCurrency),
         _buildBudgetProgressBar(formatCurrency),
         if (_expenseByCategory.isNotEmpty) ...[
           _buildPieChartSection(formatCurrency),
           _buildCategoryBreakdown(formatCurrency),
         ],
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Text(
-            'Lançamentos (Toque para editar)',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Lançamentos (${_selectedAccountFilter})',
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
+              ),
+              Text(
+                '${_filteredTransactions.length} item(ns)',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
           ),
         ),
         _filteredTransactions.isEmpty
@@ -466,7 +516,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: EdgeInsets.all(32.0),
                 child: Center(
                   child: Text(
-                    'Nenhum lançamento neste mês.',
+                    'Nenhum lançamento neste mês para o filtro selecionado.',
+                    textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey),
                   ),
                 ),
@@ -504,7 +555,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w500)),
                       subtitle: Text(
-                          '${item.category} • ${DateFormat('dd/MM/yyyy').format(item.date)}'),
+                          '${item.category} • ${item.account}\n${DateFormat('dd/MM/yyyy').format(item.date)}'),
                       trailing: Text(
                         '${isIncome ? '+' : '-'} ${formatCurrency.format(item.amount)}',
                         style: TextStyle(
@@ -543,6 +594,40 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Próximo mês',
           ),
         ],
+      ),
+    );
+  }
+
+  // Barra de Rolagem Horizontal para Filtro por Conta/Cartão
+  Widget _buildAccountFilterBar(List<String> accounts) {
+    return Container(
+      height: 44,
+      margin: const EdgeInsets.only(bottom: 6.0),
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12.0),
+        itemCount: accounts.length,
+        itemBuilder: (ctx, index) {
+          final acc = accounts[index];
+          final isSelected = _selectedAccountFilter == acc;
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            child: FilterChip(
+              avatar: acc == 'Todas'
+                  ? const Icon(Icons.all_inclusive, size: 16)
+                  : Icon(_getAccountIcon(acc), size: 16),
+              label: Text(acc, style: const TextStyle(fontSize: 12)),
+              selected: isSelected,
+              selectedColor: Colors.teal.withOpacity(0.3),
+              checkmarkColor: Colors.tealAccent,
+              onSelected: (selected) {
+                setState(() {
+                  _selectedAccountFilter = acc;
+                });
+              },
+            ),
+          );
+        },
       ),
     );
   }
@@ -588,7 +673,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             const Divider(height: 18),
-            const Text('Saldo Consolidado Total', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            Text(
+              _selectedAccountFilter == 'Todas' ? 'Saldo Consolidado Total' : 'Saldo: $_selectedAccountFilter',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
             const SizedBox(height: 4),
             Text(
               formatter.format(_consolidatedBalance),
@@ -798,12 +886,16 @@ class DonutChartPainter extends CustomPainter {
 class TransactionFormModal extends StatefulWidget {
   final DateTime defaultDate;
   final TransactionItem? existingItem;
+  final List<String> availableAccounts;
+  final Function(String) onAccountCreated;
   final VoidCallback onSaved;
 
   const TransactionFormModal({
     super.key,
     required this.defaultDate,
     this.existingItem,
+    required this.availableAccounts,
+    required this.onAccountCreated,
     required this.onSaved,
   });
 
@@ -815,13 +907,13 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
   late TextEditingController _titleController;
   late TextEditingController _amountController;
   late TextEditingController _categoryController;
+  late String _selectedAccount;
   TransactionType _type = TransactionType.expense;
   late DateTime _chosenDate;
 
-  // Variáveis para compras parceladas
   bool _isInstallment = false;
   int _installmentsCount = 2;
-  bool _amountIsTotal = true; // true = Valor informado é o Total; false = Valor informado é da Parcela
+  bool _amountIsTotal = true;
 
   final List<Map<String, dynamic>> _quickCategories = [
     {'name': 'Alimentação', 'icon': Icons.restaurant},
@@ -842,12 +934,14 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       _titleController = TextEditingController(text: item.title);
       _amountController = TextEditingController(text: item.amount.toStringAsFixed(2));
       _categoryController = TextEditingController(text: item.category);
+      _selectedAccount = item.account;
       _type = item.type;
       _chosenDate = item.date;
     } else {
       _titleController = TextEditingController();
       _amountController = TextEditingController();
       _categoryController = TextEditingController(text: 'Alimentação');
+      _selectedAccount = widget.availableAccounts.isNotEmpty ? widget.availableAccounts.first : 'Conta Principal';
       final now = DateTime.now();
       _chosenDate = (widget.defaultDate.year == now.year && widget.defaultDate.month == now.month)
           ? now
@@ -867,13 +961,44 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
     }
   }
 
-  // Avança n meses respeitando os dias do mês
   DateTime _addMonths(DateTime date, int months) {
     var destYear = date.year + (date.month - 1 + months) ~/ 12;
     var destMonth = (date.month - 1 + months) % 12 + 1;
     var daysInDestMonth = DateTime(destYear, destMonth + 1, 0).day;
     var destDay = min(date.day, daysInDestMonth);
     return DateTime(destYear, destMonth, destDay, date.hour, date.minute, date.second);
+  }
+
+  void _showNewAccountDialog() {
+    final accController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nova Conta ou Cartão'),
+        content: TextField(
+          controller: accController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Nome (ex: Nubank, Cartão XP)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () {
+              final text = accController.text.trim();
+              if (text.isNotEmpty) {
+                widget.onAccountCreated(text);
+                setState(() => _selectedAccount = text);
+                Navigator.of(ctx).pop();
+              }
+            },
+            child: const Text('Adicionar'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _submit() async {
@@ -892,11 +1017,11 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
         amount: rawAmount,
         date: _chosenDate,
         category: category,
+        account: _selectedAccount,
         type: _type,
       );
       await DBHelper.instance.updateTransaction(item);
     } else {
-      // Se for Despesa e o usuário marcou Parcelado
       if (_type == TransactionType.expense && _isInstallment && _installmentsCount > 1) {
         final installmentAmount = _amountIsTotal
             ? double.parse((rawAmount / _installmentsCount).toStringAsFixed(2))
@@ -909,6 +1034,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
             amount: installmentAmount,
             date: installmentDate,
             category: category,
+            account: _selectedAccount,
             type: TransactionType.expense,
           );
           await DBHelper.instance.insertTransaction(item);
@@ -919,6 +1045,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
           amount: rawAmount,
           date: _chosenDate,
           category: category,
+          account: _selectedAccount,
           type: _type,
         );
         await DBHelper.instance.insertTransaction(item);
@@ -975,7 +1102,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               TextField(
                 controller: _titleController,
                 decoration: const InputDecoration(
-                  labelText: 'Descrição (ex: Smartphone, Supermercado)',
+                  labelText: 'Descrição (ex: Supermercado, Almoço)',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -990,8 +1117,41 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   border: const OutlineInputBorder(),
                 ),
               ),
+              const SizedBox(height: 12),
 
-              // Bloco de Parcelamento (visível apenas para Despesa em novos lançamentos)
+              // Seletor de Conta / Cartão
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: widget.availableAccounts.contains(_selectedAccount)
+                          ? _selectedAccount
+                          : widget.availableAccounts.first,
+                      decoration: const InputDecoration(
+                        labelText: 'Conta ou Cartão',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      items: widget.availableAccounts.map((acc) {
+                        return DropdownMenuItem<String>(
+                          value: acc,
+                          child: Text(acc),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        if (val != null) setState(() => _selectedAccount = val);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filledTonal(
+                    onPressed: _showNewAccountDialog,
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Criar Nova Conta/Cartão',
+                  ),
+                ],
+              ),
+
               if (_type == TransactionType.expense && !isEdit) ...[
                 const SizedBox(height: 8),
                 SwitchListTile(
