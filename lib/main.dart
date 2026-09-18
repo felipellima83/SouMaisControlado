@@ -5,8 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
@@ -34,7 +33,6 @@ class FinanceApp extends StatelessWidget {
   }
 }
 
-// Tela de proteção por Biometria/Senha
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
@@ -45,7 +43,6 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   final LocalAuthentication _auth = LocalAuthentication();
   bool _isAuthenticated = false;
-  bool _canCheckBiometrics = false;
 
   @override
   void initState() {
@@ -56,11 +53,9 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> _checkBiometrics() async {
     try {
       final canCheck = await _auth.canCheckBiometrics || await _auth.isDeviceSupported();
-      setState(() => _canCheckBiometrics = canCheck);
       if (canCheck) {
         _authenticate();
       } else {
-        // Se o celular não tiver biometria/senha cadastrada, libera direto
         setState(() => _isAuthenticated = true);
       }
     } catch (_) {
@@ -78,9 +73,7 @@ class _AuthGateState extends State<AuthGate> {
         ),
       );
       setState(() => _isAuthenticated = authenticated);
-    } catch (_) {
-      // Caso o usuário cancele ou ocorra falha de hardware, mantém tela de desbloqueio
-    }
+    } catch (_) {}
   }
 
   @override
@@ -165,18 +158,16 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Lançamentos do mês selecionado
   List<TransactionItem> get _filteredTransactions {
     return _allTransactions.where((t) {
       return t.date.year == _selectedMonth.year && t.date.month == _selectedMonth.month;
     }).toList();
   }
 
-  // Acumulado de meses anteriores ao mês selecionado
   double get _accumulatedPreviousBalance {
     final firstDayOfSelectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month, 1);
     final previousTransactions = _allTransactions.where((t) => t.date.isBefore(firstDayOfSelectedMonth));
-    
+
     double income = previousTransactions
         .where((t) => t.type == TransactionType.income)
         .fold(0.0, (sum, t) => sum + t.amount);
@@ -196,7 +187,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   double get _currentMonthBalance => _totalIncome - _totalExpense;
 
-  // Saldo total acumulado até o fim do mês selecionado
   double get _consolidatedBalance => _accumulatedPreviousBalance + _currentMonthBalance;
 
   Map<String, double> get _expenseByCategory {
@@ -248,7 +238,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Exportar backup (JSON / CSV)
   Future<void> _exportBackup(String format) async {
     if (_allTransactions.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -258,60 +247,81 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     try {
+      final dir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
       final nowStr = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+
       if (format == 'csv') {
+        final file = File('${dir.path}/backup_financas_$nowStr.csv');
         final buffer = StringBuffer();
         buffer.writeln('ID,Título,Valor,Data,Categoria,Tipo');
         for (final t in _allTransactions) {
           buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}",${t.type.name}');
         }
-        await Share.shareXFiles(
-          [XFile.fromData(utf8.encode(buffer.toString()), mimeType: 'text/csv', name: 'backup_financas_$nowStr.csv')],
-          subject: 'Backup Sou Mais Controlado (CSV)',
-        );
+        await file.writeAsString(buffer.toString());
+        if (!mounted) return;
+        _showFileLocationDialog('Planilha CSV salva com sucesso!', file.path);
       } else {
+        final file = File('${dir.path}/backup_financas_$nowStr.json');
         final list = _allTransactions.map((t) => t.toMap()).toList();
-        final jsonStr = jsonEncode(list);
-        await Share.shareXFiles(
-          [XFile.fromData(utf8.encode(jsonStr), mimeType: 'application/json', name: 'backup_financas_$nowStr.json')],
-          subject: 'Backup Sou Mais Controlado (JSON)',
-        );
+        await file.writeAsString(jsonEncode(list));
+        if (!mounted) return;
+        _showFileLocationDialog('Backup JSON salvo com sucesso!', file.path);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao exportar backup: $e')),
+        SnackBar(content: Text('Erro ao exportar: $e')),
       );
     }
   }
 
-  // Restaurar backup de arquivo JSON
   Future<void> _restoreBackup() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['json'],
-      );
+      final dir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
+      final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.json')).toList();
 
-      if (result != null && result.files.single.path != null) {
-        final file = File(result.files.single.path!);
-        final content = await file.readAsString();
-        final List<dynamic> decoded = jsonDecode(content);
-
-        final items = decoded.map((item) => TransactionItem.fromMap(Map<String, dynamic>.from(item))).toList();
-        
-        await DBHelper.instance.replaceAllTransactions(items);
-        _refreshTransactions();
-
+      if (files.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Sucesso! ${items.length} lançamentos restaurados.')),
+          SnackBar(content: Text('Nenhum backup .json encontrado em:\n${dir.path}')),
         );
+        return;
       }
+
+      files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+      final latestFile = files.first;
+
+      final content = await latestFile.readAsString();
+      final List<dynamic> decoded = jsonDecode(content);
+      final items = decoded.map((item) => TransactionItem.fromMap(Map<String, dynamic>.from(item))).toList();
+
+      await DBHelper.instance.replaceAllTransactions(items);
+      _refreshTransactions();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Restaurado com sucesso (${items.length} lançamentos)!')),
+      );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao restaurar backup: $e')),
+        SnackBar(content: Text('Erro ao restaurar: $e')),
       );
     }
+  }
+
+  void _showFileLocationDialog(String title, String path) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text('Arquivo gravado localmente em:\n\n$path'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showSetBudgetDialog() {
@@ -394,7 +404,7 @@ class _HomeScreenState extends State<HomeScreen> {
             itemBuilder: (context) => [
               const PopupMenuItem(value: 'export_csv', child: Text('Exportar Planilha (CSV)')),
               const PopupMenuItem(value: 'export_json', child: Text('Exportar Backup Completo (JSON)')),
-              const PopupMenuItem(value: 'restore', child: Text('Restaurar Backup (JSON)')),
+              const PopupMenuItem(value: 'restore', child: Text('Restaurar Último Backup (JSON)')),
             ],
           ),
         ],
@@ -507,7 +517,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
-        const SizedBox(height: 80), // Espaço para não cobrir o FAB
+        const SizedBox(height: 80),
       ],
     );
   }
@@ -537,7 +547,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Card com Acumulado Anterior + Saldo do Mês + Consolidado Total
   Widget _buildConsolidatedSummaryCard(NumberFormat formatter) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
@@ -660,7 +669,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Gráfico de Pizza / Rosca Nativo
   Widget _buildPieChartSection(NumberFormat formatter) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
@@ -736,7 +744,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// Pintor gráfico do gráfico de Rosca (Donut Chart)
 class DonutChartPainter extends CustomPainter {
   final Map<String, double> categoryExpenses;
   final double total;
