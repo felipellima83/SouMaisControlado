@@ -72,6 +72,25 @@ class DBHelper {
     return await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
+  // Renomeia todas as transações associadas à conta
+  Future<int> renameAccount(String oldName, String newName) async {
+    final db = await instance.database;
+    return await db.rawUpdate(
+      'UPDATE transactions SET account = ? WHERE account = ?',
+      [newName, oldName],
+    );
+  }
+
+  // Exclui a conta e todas as transações vinculadas em cascata
+  Future<int> deleteAccountAndTransactions(String accountName) async {
+    final db = await instance.database;
+    return await db.delete(
+      'transactions',
+      where: 'account = ?',
+      whereArgs: [accountName],
+    );
+  }
+
   Future<void> replaceAllTransactions(List<TransactionItem> items) async {
     final db = await instance.database;
     await db.transaction((txn) async {
