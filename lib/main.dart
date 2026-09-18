@@ -106,9 +106,7 @@ class _AuthGateState extends State<AuthGate> {
                 onPressed: _authenticate,
                 icon: const Icon(Icons.fingerprint),
                 label: const Text('Desbloquear'),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(200, 48),
-                ),
+                style: ElevatedButton.styleFrom(minimumSize: const Size(200, 48)),
               ),
             ],
           ),
@@ -178,6 +176,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
+  // Agrupa transações por dia (YYYY-MM-DD) ordenando decrescente
+  Map<DateTime, List<TransactionItem>> get _groupedTransactions {
+    final Map<DateTime, List<TransactionItem>> map = {};
+    final list = [..._filteredTransactions];
+    list.sort((a, b) => b.date.compareTo(a.date));
+
+    for (var t in list) {
+      final dayKey = DateTime(t.date.year, t.date.month, t.date.day);
+      map.putIfAbsent(dayKey, () => []).add(t);
+    }
+    return map;
+  }
+
   double get _accumulatedPreviousBalance {
     final firstDayOfSelectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month, 1);
     final previousTransactions = _allTransactions.where((t) {
@@ -231,9 +242,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          newStatus ? 'Lançamento marcado como efetivado!' : 'Lançamento marcado como pendente.',
-        ),
+        content: Text(newStatus ? 'Lançamento efetivado' : 'Lançamento marcado como pendente'),
         duration: const Duration(seconds: 1),
       ),
     );
@@ -252,47 +261,38 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Excluir Repetição'),
         content: Text(
-          'O lançamento "${item.title}" faz parte de uma série (parcelada ou mensal fixa).\n\nComo deseja excluir?',
+          'O lançamento "${item.title}" faz parte de uma série.\n\nComo deseja excluir?',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancelar'),
-          ),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
           ListTile(
             dense: true,
             leading: const Icon(Icons.delete_outline),
             title: const Text('Apenas este lançamento'),
-            subtitle: const Text('Remove somente a parcela/mês selecionado'),
             onTap: () async {
               Navigator.of(ctx).pop();
               await DBHelper.instance.deleteTransaction(item.id!);
               _refreshTransactions();
-              _showSnackBar('Lançamento removido.');
             },
           ),
           ListTile(
             dense: true,
             leading: const Icon(Icons.arrow_forward),
             title: const Text('Deste em diante'),
-            subtitle: const Text('Mantém os meses anteriores e apaga os futuros'),
             onTap: () async {
               Navigator.of(ctx).pop();
               await DBHelper.instance.deleteGroupFromDate(item.groupId!, item.date);
               _refreshTransactions();
-              _showSnackBar('Lançamentos futuros removidos.');
             },
           ),
           ListTile(
             dense: true,
             leading: const Icon(Icons.delete_forever, color: Colors.redAccent),
-            title: const Text('Todas as repetições (Desde o início)', style: TextStyle(color: Colors.redAccent)),
-            subtitle: const Text('Apaga a série completa em todos os meses'),
+            title: const Text('Todas as repetições', style: TextStyle(color: Colors.redAccent)),
             onTap: () async {
               Navigator.of(ctx).pop();
               await DBHelper.instance.deleteGroupAll(item.groupId!);
               _refreshTransactions();
-              _showSnackBar('Série completa removida.');
             },
           ),
         ],
@@ -308,7 +308,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Lançamento "${item.title}" removido.'),
+        content: Text('"${item.title}" removido.'),
         action: SnackBarAction(
           label: 'Desfazer',
           onPressed: () async {
@@ -318,12 +318,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-  }
-
-  void _showSnackBar(String text) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   void _openTransactionModal([TransactionItem? existingItem]) {
@@ -361,22 +355,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Gerenciar Contas e Cartões',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
+                    const Text('Gerenciar Contas e Cartões', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.of(context).pop()),
                   ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Toque no lápis para renomear ou na lixeira para excluir a conta e todos os seus lançamentos vinculados.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-                const Divider(height: 20),
+                const Divider(),
                 Flexible(
                   child: ListView.builder(
                     shrinkWrap: true,
@@ -386,28 +369,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       final count = _allTransactions.where((t) => t.account == acc).length;
 
                       return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: Colors.teal.withOpacity(0.2),
-                          child: Icon(_getAccountIcon(acc), color: Colors.teal, size: 20),
-                        ),
-                        title: Text(acc, style: const TextStyle(fontWeight: FontWeight.w500)),
-                        subtitle: Text('$count lançamento(s) vinculados'),
+                        dense: true,
+                        leading: const Icon(Icons.account_balance_wallet, color: Colors.teal),
+                        title: Text(acc),
+                        subtitle: Text('$count lançamentos'),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.edit, size: 20, color: Colors.tealAccent),
-                              tooltip: 'Renomear',
-                              onPressed: () => _showEditAccountDialog(acc, () {
-                                setModalState(() {});
-                              }),
+                              icon: const Icon(Icons.edit, size: 18, color: Colors.tealAccent),
+                              onPressed: () => _showEditAccountDialog(acc, () => setModalState(() {})),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.delete_outline, size: 20, color: Colors.redAccent),
-                              tooltip: 'Excluir',
-                              onPressed: () => _showDeleteAccountDialog(acc, count, () {
-                                setModalState(() {});
-                              }),
+                              icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                              onPressed: () => _showDeleteAccountDialog(acc, count, () => setModalState(() {})),
                             ),
                           ],
                         ),
@@ -415,7 +390,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
                 ),
-                const SizedBox(height: 12),
               ],
             ),
           );
@@ -430,14 +404,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Renomear Conta/Cartão'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Novo Nome',
-            border: OutlineInputBorder(),
-          ),
-        ),
+        content: TextField(controller: controller, autofocus: true),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
           ElevatedButton(
@@ -467,10 +434,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('Excluir "$accountName"?'),
-        content: Text(
-          'ATENÇÃO: A conta será excluída e TODAS as $transactionsCount transação(ões) vinculadas a ela serão APAGADAS permanentemente.\n\nDeseja continuar?',
-          style: const TextStyle(height: 1.4),
-        ),
+        content: Text('A conta e todas as $transactionsCount transações vinculadas serão apagadas.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
           ElevatedButton(
@@ -479,9 +443,7 @@ class _HomeScreenState extends State<HomeScreen> {
               await DBHelper.instance.deleteAccountAndTransactions(accountName);
               setState(() {
                 _customAccounts.remove(accountName);
-                if (_selectedAccountFilter == accountName) {
-                  _selectedAccountFilter = 'Todas';
-                }
+                if (_selectedAccountFilter == accountName) _selectedAccountFilter = 'Todas';
               });
               _refreshTransactions();
               onUpdatedModal();
@@ -495,13 +457,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _exportBackup(String format) async {
-    if (_allTransactions.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nenhum dado para exportar.')),
-      );
-      return;
-    }
-
+    if (_allTransactions.isEmpty) return;
     try {
       final dir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
       final nowStr = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
@@ -514,70 +470,28 @@ class _HomeScreenState extends State<HomeScreen> {
           buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}","${t.account}","${t.groupId ?? ''}",${t.isCompleted ? 1 : 0},${t.type.name}');
         }
         await file.writeAsString(buffer.toString());
-        if (!mounted) return;
-        _showFileLocationDialog('Planilha CSV salva com sucesso!', file.path);
       } else {
         final file = File('${dir.path}/backup_financas_$nowStr.json');
         final list = _allTransactions.map((t) => t.toMap()).toList();
         await file.writeAsString(jsonEncode(list));
-        if (!mounted) return;
-        _showFileLocationDialog('Backup JSON salvo com sucesso!', file.path);
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao exportar: $e')),
-      );
-    }
+    } catch (_) {}
   }
 
   Future<void> _restoreBackup() async {
     try {
       final dir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
       final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.json')).toList();
-
-      if (files.isEmpty) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Nenhum backup .json encontrado em:\n${dir.path}')),
-        );
-        return;
-      }
+      if (files.isEmpty) return;
 
       files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-      final latestFile = files.first;
-
-      final content = await latestFile.readAsString();
+      final content = await files.first.readAsString();
       final List<dynamic> decoded = jsonDecode(content);
       final items = decoded.map((item) => TransactionItem.fromMap(Map<String, dynamic>.from(item))).toList();
 
       await DBHelper.instance.replaceAllTransactions(items);
       _refreshTransactions();
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Restaurado com sucesso (${items.length} lançamentos)!')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao restaurar: $e')),
-      );
-    }
-  }
-
-  void _showFileLocationDialog(String title, String path) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text('Arquivo gravado localmente em:\n\n$path'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
+    } catch (_) {}
   }
 
   void _showSetBudgetDialog() {
@@ -589,16 +503,10 @@ class _HomeScreenState extends State<HomeScreen> {
         content: TextField(
           controller: controller,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: 'Teto do Mês (R\$)',
-            border: OutlineInputBorder(),
-          ),
+          decoration: const InputDecoration(labelText: 'Teto do Mês (R\$)', border: OutlineInputBorder()),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancelar'),
-          ),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () {
               final val = double.tryParse(controller.text.replaceAll(',', '.')) ?? _monthlyBudget;
@@ -612,17 +520,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  IconData _getAccountIcon(String account) {
-    final acc = account.toLowerCase();
-    if (acc.contains('cartão') || acc.contains('cartao') || acc.contains('crédito')) {
-      return Icons.credit_card;
-    }
-    if (acc.contains('carteira') || acc.contains('dinheiro')) {
-      return Icons.wallet;
-    }
-    return Icons.account_balance;
-  }
-
   @override
   Widget build(BuildContext context) {
     final formatCurrency = NumberFormat.simpleCurrency(locale: 'pt_BR');
@@ -630,15 +527,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Sou Mais Controlado'),
+        title: const Text('Sou Mais Controlado', style: TextStyle(fontSize: 18)),
         actions: [
           IconButton(
-            icon: const Icon(Icons.track_changes),
+            icon: const Icon(Icons.track_changes, size: 20),
             onPressed: _showSetBudgetDialog,
-            tooltip: 'Definir Meta de Gastos',
+            tooltip: 'Meta',
           ),
           PopupMenuButton<String>(
-            tooltip: 'Opções e Backup',
             onSelected: (val) {
               if (val == 'manage_accounts') _openManageAccountsDialog();
               if (val == 'export_csv') _exportBackup('csv');
@@ -646,20 +542,11 @@ class _HomeScreenState extends State<HomeScreen> {
               if (val == 'restore') _restoreBackup();
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'manage_accounts',
-                child: Row(
-                  children: [
-                    Icon(Icons.credit_card, size: 18, color: Colors.teal),
-                    SizedBox(width: 8),
-                    Text('Gerenciar Contas/Cartões'),
-                  ],
-                ),
-              ),
+              const PopupMenuItem(value: 'manage_accounts', child: Text('Gerenciar Contas/Cartões')),
               const PopupMenuDivider(),
               const PopupMenuItem(value: 'export_csv', child: Text('Exportar Planilha (CSV)')),
-              const PopupMenuItem(value: 'export_json', child: Text('Exportar Backup Completo (JSON)')),
-              const PopupMenuItem(value: 'restore', child: Text('Restaurar Último Backup (JSON)')),
+              const PopupMenuItem(value: 'export_json', child: Text('Exportar Backup (JSON)')),
+              const PopupMenuItem(value: 'restore', child: Text('Restaurar Backup (JSON)')),
             ],
           ),
         ],
@@ -674,32 +561,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBody(NumberFormat formatCurrency, DateFormat monthFormat) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
     if (_errorMessage != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
-              const SizedBox(height: 12),
-              Text(_errorMessage!, textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: _refreshTransactions,
-                child: const Text('Tentar Novamente'),
-              ),
-            ],
-          ),
-        ),
-      );
+      return Center(child: Text(_errorMessage!));
     }
 
     final allAccountsList = ['Todas', ..._customAccounts];
+    final grouped = _groupedTransactions;
 
     return ListView(
       padding: EdgeInsets.zero,
@@ -708,139 +576,165 @@ class _HomeScreenState extends State<HomeScreen> {
         _buildAccountFilterBar(allAccountsList),
         _buildConsolidatedSummaryCard(formatCurrency),
         _buildBudgetProgressBar(formatCurrency),
-        if (_expenseByCategory.isNotEmpty) _buildCategoryBreakdown(formatCurrency),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Lançamentos (${_selectedAccountFilter})',
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey),
-              ),
-              Text(
-                '${_filteredTransactions.length} item(ns)',
-                style: const TextStyle(fontSize: 11, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-        _filteredTransactions.isEmpty
-            ? const Padding(
-                padding: EdgeInsets.all(32.0),
-                child: Center(
-                  child: Text(
-                    'Nenhum lançamento neste mês para o filtro selecionado.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ),
-              )
-            : ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _filteredTransactions.length,
-                itemBuilder: (ctx, index) {
-                  final item = _filteredTransactions[index];
-                  final isIncome = item.type == TransactionType.income;
-                  final isRecurringOrInstallment = item.groupId != null;
 
-                  return Dismissible(
-                    key: Key('${item.id}_${item.title}_${item.date.toIso8601String()}'),
-                    direction: DismissDirection.endToStart,
-                    confirmDismiss: (direction) async {
-                      _confirmDeleteTransaction(item);
-                      return false;
-                    },
-                    background: Container(
-                      alignment: Alignment.centerRight,
-                      padding: const EdgeInsets.only(right: 20),
-                      color: Colors.redAccent.withOpacity(0.8),
-                      child: const Icon(Icons.delete, color: Colors.white),
-                    ),
-                    child: ListTile(
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 0.0),
-                      onTap: () => _openTransactionModal(item),
-                      leading: IconButton(
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        icon: Icon(
-                          item.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
-                          color: item.isCompleted ? Colors.tealAccent : Colors.grey,
-                          size: 22,
-                        ),
-                        tooltip: item.isCompleted
-                            ? 'Efetivado (Toque para marcar como pendente)'
-                            : 'Pendente (Toque para efetivar)',
-                        onPressed: () => _toggleTransactionEffective(item),
-                      ),
-                      title: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              item.title,
-                              style: TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w500,
-                                color: item.isCompleted ? Colors.white : Colors.white70,
-                              ),
-                            ),
-                          ),
-                          if (!item.isCompleted)
-                            Container(
-                              margin: const EdgeInsets.only(right: 4),
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: Colors.orangeAccent.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: const Text(
-                                'Pendente',
-                                style: TextStyle(
-                                  fontSize: 9.5,
-                                  color: Colors.orangeAccent,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          if (isRecurringOrInstallment)
-                            Icon(
-                              Icons.repeat,
-                              size: 13,
-                              color: Colors.teal.shade200,
-                            ),
-                        ],
-                      ),
-                      subtitle: Text(
-                        '${item.category} • ${item.account} • ${DateFormat('dd/MM/yyyy').format(item.date)}',
-                        style: const TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '${isIncome ? '+' : '-'} ${formatCurrency.format(item.amount)}',
-                            style: TextStyle(
-                              color: isIncome ? Colors.green : Colors.redAccent,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13.5,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          IconButton(
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
-                            onPressed: () => _confirmDeleteTransaction(item),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
+        // Lista com layout estilo planilha igual à imagem
+        if (grouped.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(32.0),
+            child: Center(
+              child: Text(
+                'Nenhum lançamento neste mês para o filtro selecionado.',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
+            ),
+          )
+        else
+          ...grouped.entries.map((entry) {
+            final date = entry.key;
+            final items = entry.value;
+
+            // Saldo do dia
+            final dayIncome = items.where((t) => t.type == TransactionType.income).fold(0.0, (sum, t) => sum + t.amount);
+            final dayExpense = items.where((t) => t.type == TransactionType.expense).fold(0.0, (sum, t) => sum + t.amount);
+            final dayBalance = dayIncome - dayExpense;
+
+            final dayTitle = '${DateFormat('dd/MM/yyyy', 'pt_BR').format(date)}, ${toBeginningOfSentenceCase(DateFormat('EEEE', 'pt_BR').format(date))}';
+
+            return Container(
+              margin: const EdgeInsets.only(top: 8.0, bottom: 4.0),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.08))),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Cabeçalho da data (ex: 01/09/2026, Terça-feira)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    color: Colors.white.withOpacity(0.04),
+                    child: Row(
+                      children: [
+                        Icon(Icons.indeterminate_check_box_outlined, size: 14, color: Colors.teal.shade200),
+                        const SizedBox(width: 6),
+                        Text(
+                          dayTitle,
+                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, letterSpacing: 0.2),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Linhas da tabela (zebradas)
+                  ...items.asMap().entries.map((itemEntry) {
+                    final idx = itemEntry.key;
+                    final item = itemEntry.value;
+                    final isIncome = item.type == TransactionType.income;
+                    final isEven = idx % 2 == 0;
+
+                    return InkWell(
+                      onTap: () => _openTransactionModal(item),
+                      onLongPress: () => _confirmDeleteTransaction(item),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        color: isEven ? Colors.transparent : Colors.white.withOpacity(0.035),
+                        child: Row(
+                          children: [
+                            // Checkbox
+                            SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Checkbox(
+                                value: item.isCompleted,
+                                activeColor: Colors.teal,
+                                checkColor: Colors.black,
+                                side: BorderSide(color: Colors.grey.shade600, width: 1.2),
+                                onChanged: (val) => _toggleTransactionEffective(item),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+
+                            // Título / Descrição
+                            Expanded(
+                              flex: 4,
+                              child: Text(
+                                item.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+
+                            // Categoria
+                            Expanded(
+                              flex: 3,
+                              child: Text(
+                                item.category,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade400),
+                              ),
+                            ),
+
+                            // Conta / Cartão
+                            Expanded(
+                              flex: 3,
+                              child: Text(
+                                item.account,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade400),
+                              ),
+                            ),
+
+                            // Valor (+ ou -) com Check de Efetivado
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '${isIncome ? '+' : '-'} ${item.amount.toStringAsFixed(2).replaceAll('.', ',')}',
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: isIncome ? Colors.greenAccent.shade400 : Colors.redAccent.shade100,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Icon(
+                                  Icons.check,
+                                  size: 14,
+                                  color: item.isCompleted ? Colors.tealAccent : Colors.grey.shade700,
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+
+                  // Linha pontilhada e Saldo do Dia
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0, bottom: 4.0, right: 12.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text('Saldo do dia: ', style: TextStyle(fontSize: 11, color: Colors.grey.shade400)),
+                        Text(
+                          'R\$ ${dayBalance.toStringAsFixed(2).replaceAll('.', ',')}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: dayBalance >= 0 ? Colors.white : Colors.redAccent.shade100,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+
         const SizedBox(height: 80),
       ],
     );
@@ -853,18 +747,16 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           IconButton(
-            icon: const Icon(Icons.chevron_left),
+            icon: const Icon(Icons.chevron_left, size: 20),
             onPressed: () => _changeMonth(-1),
-            tooltip: 'Mês anterior',
           ),
           Text(
             monthFormat.format(_selectedMonth).toUpperCase(),
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
           ),
           IconButton(
-            icon: const Icon(Icons.chevron_right),
+            icon: const Icon(Icons.chevron_right, size: 20),
             onPressed: () => _changeMonth(1),
-            tooltip: 'Próximo mês',
           ),
         ],
       ),
@@ -873,7 +765,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildAccountFilterBar(List<String> accounts) {
     return Container(
-      height: 44,
+      height: 38,
       margin: const EdgeInsets.only(bottom: 6.0),
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
@@ -883,19 +775,15 @@ class _HomeScreenState extends State<HomeScreen> {
           final acc = accounts[index];
           final isSelected = _selectedAccountFilter == acc;
           return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            padding: const EdgeInsets.symmetric(horizontal: 3.0),
             child: FilterChip(
-              avatar: acc == 'Todas'
-                  ? const Icon(Icons.all_inclusive, size: 16)
-                  : Icon(_getAccountIcon(acc), size: 16),
-              label: Text(acc, style: const TextStyle(fontSize: 12)),
+              visualDensity: VisualDensity.compact,
+              label: Text(acc, style: const TextStyle(fontSize: 11.5)),
               selected: isSelected,
               selectedColor: Colors.teal.withOpacity(0.3),
               checkmarkColor: Colors.tealAccent,
               onSelected: (selected) {
-                setState(() {
-                  _selectedAccountFilter = acc;
-                });
+                setState(() => _selectedAccountFilter = acc);
               },
             ),
           );
@@ -906,9 +794,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildConsolidatedSummaryCard(NumberFormat formatter) {
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+      margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(12.0),
         child: Column(
           children: [
             Row(
@@ -917,11 +805,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Acumulado Anterior', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    const Text('Acumulado Anterior', style: TextStyle(fontSize: 10.5, color: Colors.grey)),
                     Text(
                       formatter.format(_accumulatedPreviousBalance),
                       style: TextStyle(
-                        fontSize: 15,
+                        fontSize: 14,
                         fontWeight: FontWeight.bold,
                         color: _accumulatedPreviousBalance >= 0 ? Colors.greenAccent : Colors.redAccent,
                       ),
@@ -931,11 +819,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    const Text('Saldo do Mês', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    const Text('Saldo do Mês', style: TextStyle(fontSize: 10.5, color: Colors.grey)),
                     Text(
                       formatter.format(_currentMonthBalance),
                       style: TextStyle(
-                        fontSize: 15,
+                        fontSize: 14,
                         fontWeight: FontWeight.bold,
                         color: _currentMonthBalance >= 0 ? Colors.greenAccent : Colors.redAccent,
                       ),
@@ -944,37 +832,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
             ),
-            const Divider(height: 18),
-            Text(
-              _selectedAccountFilter == 'Todas' ? 'Saldo Consolidado Total' : 'Saldo: $_selectedAccountFilter',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              formatter.format(_consolidatedBalance),
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.bold,
-                color: _consolidatedBalance >= 0 ? Colors.white : Colors.redAccent,
-              ),
-            ),
-            const Divider(height: 18),
+            const Divider(height: 14),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  children: [
-                    const Text('Receitas (Mês)', style: TextStyle(color: Colors.green, fontSize: 11)),
-                    Text(formatter.format(_totalIncome),
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  ],
+                Text(
+                  _selectedAccountFilter == 'Todas' ? 'Consolidado:' : 'Saldo ($_selectedAccountFilter):',
+                  style: const TextStyle(fontSize: 11.5, color: Colors.grey),
                 ),
-                Column(
-                  children: [
-                    const Text('Despesas (Mês)', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
-                    Text(formatter.format(_totalExpense),
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  ],
+                Text(
+                  formatter.format(_consolidatedBalance),
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: _consolidatedBalance >= 0 ? Colors.white : Colors.redAccent,
+                  ),
                 ),
               ],
             ),
@@ -997,7 +869,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+      padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 4.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1005,68 +877,26 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Meta: ${formatter.format(_totalExpense)} de ${formatter.format(_monthlyBudget)}',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                'Teto: ${formatter.format(_totalExpense)} / ${formatter.format(_monthlyBudget)}',
+                style: const TextStyle(fontSize: 10.5, color: Colors.grey),
               ),
               Text(
                 '${pctNumber.toStringAsFixed(0)}%',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: barColor),
+                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: barColor),
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           ClipRRect(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: progress,
               color: barColor,
               backgroundColor: Colors.white10,
-              minHeight: 7,
+              minHeight: 5,
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildCategoryBreakdown(NumberFormat formatter) {
-    final total = _totalExpense;
-    if (total <= 0) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.04),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Gastos por Categoria',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey),
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: _expenseByCategory.entries.map((e) {
-                final pct = (e.value / total) * 100;
-                return Chip(
-                  label: Text(
-                    '${e.key}: ${formatter.format(e.value)} (${pct.toStringAsFixed(0)}%)',
-                    style: const TextStyle(fontSize: 10),
-                  ),
-                  backgroundColor: Colors.teal.withOpacity(0.12),
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
-                );
-              }).toList(),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1107,15 +937,15 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
 
   bool _isRecurring = false;
 
-  final List<Map<String, dynamic>> _quickCategories = [
-    {'name': 'Alimentação', 'icon': Icons.restaurant},
-    {'name': 'Transporte', 'icon': Icons.directions_car},
-    {'name': 'Moradia', 'icon': Icons.home},
-    {'name': 'Saúde', 'icon': Icons.local_hospital},
-    {'name': 'Lazer', 'icon': Icons.sports_esports},
-    {'name': 'Compras', 'icon': Icons.shopping_bag},
-    {'name': 'Contas', 'icon': Icons.receipt_long},
-    {'name': 'Salário', 'icon': Icons.account_balance_wallet},
+  final List<String> _quickCategories = [
+    'Alimentação',
+    'Transporte',
+    'Moradia',
+    'Saúde',
+    'Lazer',
+    'Compras',
+    'Contas',
+    'Salário',
   ];
 
   @override
@@ -1172,10 +1002,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
         content: TextField(
           controller: accController,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Nome (ex: Nubank, Cartão XP)',
-            border: OutlineInputBorder(),
-          ),
+          decoration: const InputDecoration(labelText: 'Nome (ex: Nubank, Cartão XP)', border: OutlineInputBorder()),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
@@ -1301,10 +1128,10 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               Center(
                 child: Text(
                   isEdit ? 'Editar Lançamento' : 'Novo Lançamento',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               SegmentedButton<TransactionType>(
                 segments: const [
                   ButtonSegment(value: TransactionType.expense, label: Text('Despesa')),
@@ -1314,32 +1141,27 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 onSelectionChanged: (newVal) {
                   setState(() {
                     _type = newVal.first;
-                    if (_type == TransactionType.income) {
-                      _isInstallment = false;
-                    }
+                    if (_type == TransactionType.income) _isInstallment = false;
                   });
                 },
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               TextField(
                 controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Descrição (ex: Aluguel, Salário, Celular)',
-                  border: OutlineInputBorder(),
-                ),
+                decoration: const InputDecoration(labelText: 'Descrição', border: OutlineInputBorder()),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               TextField(
                 controller: _amountController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: InputDecoration(
                   labelText: (_isInstallment && !_amountIsTotal)
-                      ? 'Valor de Cada Parcela (R\$)'
-                      : 'Valor ${(_isInstallment) ? 'Total da Compra' : ''} (R\$)',
+                      ? 'Valor da Parcela (R\$)'
+                      : 'Valor Total (R\$)',
                   border: const OutlineInputBorder(),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   Expanded(
@@ -1350,13 +1172,10 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                       decoration: const InputDecoration(
                         labelText: 'Conta ou Cartão',
                         border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                       ),
                       items: widget.availableAccounts.map((acc) {
-                        return DropdownMenuItem<String>(
-                          value: acc,
-                          child: Text(acc),
-                        );
+                        return DropdownMenuItem<String>(value: acc, child: Text(acc));
                       }).toList(),
                       onChanged: (val) {
                         if (val != null) setState(() => _selectedAccount = val);
@@ -1367,25 +1186,21 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   IconButton.filledTonal(
                     onPressed: _showNewAccountDialog,
                     icon: const Icon(Icons.add),
-                    tooltip: 'Criar Nova Conta/Cartão',
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Lançamento Efetivado / Pago', style: TextStyle(fontWeight: FontWeight.w500)),
-                subtitle: Text(_isCompleted ? 'Transação já concretizada' : 'Transação pendente/futura'),
+                title: const Text('Lançamento Efetivado / Pago', style: TextStyle(fontSize: 13)),
                 value: _isCompleted,
                 activeColor: Colors.teal,
                 onChanged: (val) => setState(() => _isCompleted = val ?? true),
               ),
               if (!isEdit) ...[
-                const SizedBox(height: 4),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Repetir todo mês (Fixo)', style: TextStyle(fontWeight: FontWeight.w500)),
-                  subtitle: const Text('Projeta despesa ou receita recorrente'),
+                  title: const Text('Repetir todo mês (Fixo)', style: TextStyle(fontSize: 13)),
                   value: _isRecurring,
                   onChanged: (val) {
                     setState(() {
@@ -1397,24 +1212,19 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 if (_type == TransactionType.expense && !_isRecurring) ...[
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Compra Parcelada?', style: TextStyle(fontWeight: FontWeight.w500)),
-                    subtitle: Text(_isInstallment ? 'Dividir em múltiplos meses' : 'Lançamento à vista'),
+                    title: const Text('Compra Parcelada?', style: TextStyle(fontSize: 13)),
                     value: _isInstallment,
                     onChanged: (val) => setState(() => _isInstallment = val),
                   ),
                   if (_isInstallment) ...[
                     Row(
                       children: [
-                        const Text('Número de parcelas: ', style: TextStyle(fontSize: 13)),
-                        const SizedBox(width: 8),
+                        const Text('Parcelas: ', style: TextStyle(fontSize: 12)),
                         DropdownButton<int>(
                           value: _installmentsCount,
                           dropdownColor: Colors.grey[900],
-                          items: List.generate(35, (index) => index + 2).map((num) {
-                            return DropdownMenuItem<int>(
-                              value: num,
-                              child: Text('${num}x', style: const TextStyle(fontWeight: FontWeight.bold)),
-                            );
+                          items: List.generate(35, (i) => i + 2).map((num) {
+                            return DropdownMenuItem<int>(value: num, child: Text('${num}x'));
                           }).toList(),
                           onChanged: (val) {
                             if (val != null) setState(() => _installmentsCount = val);
@@ -1427,7 +1237,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                         Expanded(
                           child: RadioListTile<bool>(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('Valor Total', style: TextStyle(fontSize: 12)),
+                            title: const Text('Total', style: TextStyle(fontSize: 11)),
                             value: true,
                             groupValue: _amountIsTotal,
                             onChanged: (val) => setState(() => _amountIsTotal = val!),
@@ -1436,7 +1246,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                         Expanded(
                           child: RadioListTile<bool>(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('Valor da Parcela', style: TextStyle(fontSize: 12)),
+                            title: const Text('Por Parcela', style: TextStyle(fontSize: 11)),
                             value: false,
                             groupValue: _amountIsTotal,
                             onChanged: (val) => setState(() => _amountIsTotal = val!),
@@ -1444,27 +1254,21 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                         ),
                       ],
                     ),
-                    const Divider(height: 16),
                   ],
                 ],
               ],
-              const SizedBox(height: 8),
-              const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 6,
                 runSpacing: 4,
                 children: _quickCategories.map((cat) {
-                  final isSelected =
-                      _categoryController.text.toLowerCase() == (cat['name'] as String).toLowerCase();
+                  final isSelected = _categoryController.text.toLowerCase() == cat.toLowerCase();
                   return ChoiceChip(
-                    avatar: Icon(cat['icon'] as IconData, size: 16),
-                    label: Text(cat['name'] as String, style: const TextStyle(fontSize: 12)),
+                    visualDensity: VisualDensity.compact,
+                    label: Text(cat, style: const TextStyle(fontSize: 11)),
                     selected: isSelected,
                     onSelected: (selected) {
-                      if (selected) {
-                        setState(() => _categoryController.text = cat['name'] as String);
-                      }
+                      if (selected) setState(() => _categoryController.text = cat);
                     },
                   );
                 }).toList(),
@@ -1472,44 +1276,21 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               const SizedBox(height: 8),
               TextField(
                 controller: _categoryController,
-                decoration: const InputDecoration(
-                  labelText: 'Categoria Selecionada / Personalizada',
-                  border: OutlineInputBorder(),
-                ),
+                decoration: const InputDecoration(labelText: 'Categoria', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.calendar_today),
-                title: Text(
-                  _isInstallment
-                      ? '1ª Parcela em: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'
-                      : (_isRecurring
-                          ? 'Início em: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'
-                          : 'Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'),
-                ),
-                trailing: TextButton(
-                  onPressed: _pickDate,
-                  child: const Text('Alterar Data'),
-                ),
+                leading: const Icon(Icons.calendar_today, size: 20),
+                title: Text('Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}', style: const TextStyle(fontSize: 13)),
+                trailing: TextButton(onPressed: _pickDate, child: const Text('Alterar')),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               ElevatedButton(
                 onPressed: _submit,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                child: Text(
-                  isEdit
-                      ? 'Salvar Alterações'
-                      : (_isRecurring
-                          ? 'Salvar Lançamento Recorrente'
-                          : (_isInstallment
-                              ? 'Gerar $_installmentsCount Parcelas'
-                              : 'Salvar Lançamento')),
-                ),
+                style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+                child: Text(isEdit ? 'Salvar Alterações' : 'Salvar Lançamento'),
               ),
-              const SizedBox(height: 12),
             ],
           ),
         ),
