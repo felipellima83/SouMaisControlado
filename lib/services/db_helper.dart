@@ -20,8 +20,9 @@ class DBHelper {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onUpgrade: _upgradeDB,
     );
   }
 
@@ -33,9 +34,16 @@ class DBHelper {
         amount REAL NOT NULL,
         date TEXT NOT NULL,
         category TEXT NOT NULL,
+        account TEXT NOT NULL DEFAULT 'Conta Principal',
         type TEXT NOT NULL
       )
     ''');
+  }
+
+  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute("ALTER TABLE transactions ADD COLUMN account TEXT NOT NULL DEFAULT 'Conta Principal'");
+    }
   }
 
   Future<int> insertTransaction(TransactionItem item) async {
