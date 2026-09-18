@@ -6,6 +6,7 @@ class TransactionItem {
   final double amount;
   final DateTime date;
   final String category;
+  final String account;
   final TransactionType type;
 
   TransactionItem({
@@ -14,6 +15,7 @@ class TransactionItem {
     required this.amount,
     required this.date,
     required this.category,
+    this.account = 'Conta Principal',
     required this.type,
   });
 
@@ -24,6 +26,7 @@ class TransactionItem {
       'amount': amount,
       'date': date.toIso8601String(),
       'category': category,
+      'account': account,
       'type': type == TransactionType.income ? 'income' : 'expense',
     };
   }
@@ -35,6 +38,7 @@ class TransactionItem {
       amount: (map['amount'] as num).toDouble(),
       date: DateTime.parse(map['date'] as String),
       category: map['category'] as String,
+      account: (map['account'] as String?) ?? 'Conta Principal',
       type: map['type'] == 'income' ? TransactionType.income : TransactionType.expense,
     );
   }
