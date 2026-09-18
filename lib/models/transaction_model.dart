@@ -7,6 +7,7 @@ class TransactionItem {
   final DateTime date;
   final String category;
   final String account;
+  final String? groupId; // Identificador da série (parcelada ou recorrente)
   final TransactionType type;
 
   TransactionItem({
@@ -16,6 +17,7 @@ class TransactionItem {
     required this.date,
     required this.category,
     this.account = 'Conta Principal',
+    this.groupId,
     required this.type,
   });
 
@@ -27,6 +29,7 @@ class TransactionItem {
       'date': date.toIso8601String(),
       'category': category,
       'account': account,
+      'groupId': groupId,
       'type': type == TransactionType.income ? 'income' : 'expense',
     };
   }
@@ -39,6 +42,7 @@ class TransactionItem {
       date: DateTime.parse(map['date'] as String),
       category: map['category'] as String,
       account: (map['account'] as String?) ?? 'Conta Principal',
+      groupId: map['groupId'] as String?,
       type: map['type'] == 'income' ? TransactionType.income : TransactionType.expense,
     );
   }
