@@ -131,7 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _errorMessage;
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
   double _monthlyBudget = 3000.0;
-  String _selectedAccountFilter = 'Todas'; // Filtro de contas
+  String _selectedAccountFilter = 'Todas';
 
   final List<String> _customAccounts = [
     'Conta Principal',
@@ -153,7 +153,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final data = await DBHelper.instance.getAllTransactions();
-      // Atualiza lista de contas disponíveis com o que já foi cadastrado
       for (final item in data) {
         if (!_customAccounts.contains(item.account)) {
           _customAccounts.add(item.account);
@@ -171,7 +170,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Filtro conjunto de Mês e Conta/Cartão
   List<TransactionItem> get _filteredTransactions {
     return _allTransactions.where((t) {
       final matchesMonth = t.date.year == _selectedMonth.year && t.date.month == _selectedMonth.month;
@@ -180,7 +178,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
-  // Acumulado de meses anteriores respeitando a conta selecionada
   double get _accumulatedPreviousBalance {
     final firstDayOfSelectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month, 1);
     final previousTransactions = _allTransactions.where((t) {
@@ -261,6 +258,158 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         },
         onSaved: _refreshTransactions,
+      ),
+    );
+  }
+
+  // Abre a tela modal de Gerenciamento de Contas e Cartões
+  void _openManageAccountsDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Gerenciar Contas e Cartões',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Toque no lápis para renomear ou na lixeira para excluir a conta e todos os seus lançamentos vinculados.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const Divider(height: 20),
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _customAccounts.length,
+                    itemBuilder: (context, index) {
+                      final acc = _customAccounts[index];
+                      final count = _allTransactions.where((t) => t.account == acc).length;
+
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: Colors.teal.withOpacity(0.2),
+                          child: Icon(_getAccountIcon(acc), color: Colors.teal, size: 20),
+                        ),
+                        title: Text(acc, style: const TextStyle(fontWeight: FontWeight.w500)),
+                        subtitle: Text('$count lançamento(s) vinculados'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, size: 20, color: Colors.tealAccent),
+                              tooltip: 'Renomear',
+                              onPressed: () => _showEditAccountDialog(acc, () {
+                                setModalState(() {});
+                              }),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20, color: Colors.redAccent),
+                              tooltip: 'Excluir',
+                              onPressed: () => _showDeleteAccountDialog(acc, count, () {
+                                setModalState(() {});
+                              }),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // Diálogo para renomear conta e atualizar transações em cascata
+  void _showEditAccountDialog(String oldName, VoidCallback onUpdatedModal) {
+    final controller = TextEditingController(text: oldName);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Renomear Conta/Cartão'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Novo Nome',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isNotEmpty && newName != oldName) {
+                await DBHelper.instance.renameAccount(oldName, newName);
+                setState(() {
+                  final idx = _customAccounts.indexOf(oldName);
+                  if (idx != -1) _customAccounts[idx] = newName;
+                  if (_selectedAccountFilter == oldName) _selectedAccountFilter = newName;
+                });
+                _refreshTransactions();
+                onUpdatedModal();
+                if (mounted) Navigator.of(ctx).pop();
+              }
+            },
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Diálogo com aviso explícito de exclusão em cascata
+  void _showDeleteAccountDialog(String accountName, int transactionsCount, VoidCallback onUpdatedModal) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Excluir "$accountName"?'),
+        content: Text(
+          'ATENÇÃO: A conta será excluída e TODAS as $transactionsCount transação(ões) vinculadas a ela serão APAGADAS permanentemente.\n\nDeseja continuar?',
+          style: const TextStyle(height: 1.4),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              await DBHelper.instance.deleteAccountAndTransactions(accountName);
+              setState(() {
+                _customAccounts.remove(accountName);
+                if (_selectedAccountFilter == accountName) {
+                  _selectedAccountFilter = 'Todas';
+                }
+              });
+              _refreshTransactions();
+              onUpdatedModal();
+              if (mounted) Navigator.of(ctx).pop();
+            },
+            child: const Text('Excluir Tudo', style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
   }
@@ -435,11 +584,23 @@ class _HomeScreenState extends State<HomeScreen> {
           PopupMenuButton<String>(
             tooltip: 'Opções e Backup',
             onSelected: (val) {
+              if (val == 'manage_accounts') _openManageAccountsDialog();
               if (val == 'export_csv') _exportBackup('csv');
               if (val == 'export_json') _exportBackup('json');
               if (val == 'restore') _restoreBackup();
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'manage_accounts',
+                child: Row(
+                  children: [
+                    Icon(Icons.credit_card, size: 18, color: Colors.teal),
+                    SizedBox(width: 8),
+                    Text('Gerenciar Contas/Cartões'),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
               const PopupMenuItem(value: 'export_csv', child: Text('Exportar Planilha (CSV)')),
               const PopupMenuItem(value: 'export_json', child: Text('Exportar Backup Completo (JSON)')),
               const PopupMenuItem(value: 'restore', child: Text('Restaurar Último Backup (JSON)')),
@@ -598,7 +759,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Barra de Rolagem Horizontal para Filtro por Conta/Cartão
   Widget _buildAccountFilterBar(List<String> accounts) {
     return Container(
       height: 44,
@@ -1118,8 +1278,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // Seletor de Conta / Cartão
               Row(
                 children: [
                   Expanded(
@@ -1151,7 +1309,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   ),
                 ],
               ),
-
               if (_type == TransactionType.expense && !isEdit) ...[
                 const SizedBox(height: 8),
                 SwitchListTile(
@@ -1206,7 +1363,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   const Divider(height: 16),
                 ],
               ],
-
               const SizedBox(height: 8),
               const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 6),
