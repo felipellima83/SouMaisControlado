@@ -1,6 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
@@ -23,7 +29,98 @@ class FinanceApp extends StatelessWidget {
         colorSchemeSeed: Colors.teal,
         brightness: Brightness.dark,
       ),
-      home: const HomeScreen(),
+      home: const AuthGate(),
+    );
+  }
+}
+
+// Tela de proteção por Biometria/Senha
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  final LocalAuthentication _auth = LocalAuthentication();
+  bool _isAuthenticated = false;
+  bool _canCheckBiometrics = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometrics();
+  }
+
+  Future<void> _checkBiometrics() async {
+    try {
+      final canCheck = await _auth.canCheckBiometrics || await _auth.isDeviceSupported();
+      setState(() => _canCheckBiometrics = canCheck);
+      if (canCheck) {
+        _authenticate();
+      } else {
+        // Se o celular não tiver biometria/senha cadastrada, libera direto
+        setState(() => _isAuthenticated = true);
+      }
+    } catch (_) {
+      setState(() => _isAuthenticated = true);
+    }
+  }
+
+  Future<void> _authenticate() async {
+    try {
+      final authenticated = await _auth.authenticate(
+        localizedReason: 'Autentique-se para acessar o Sou Mais Controlado',
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
+      );
+      setState(() => _isAuthenticated = authenticated);
+    } catch (_) {
+      // Caso o usuário cancele ou ocorra falha de hardware, mantém tela de desbloqueio
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isAuthenticated) {
+      return const HomeScreen();
+    }
+
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.lock_outline, size: 72, color: Colors.teal),
+              const SizedBox(height: 20),
+              const Text(
+                'Sou Mais Controlado',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Aplicativo bloqueado para sua privacidade.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 32),
+              ElevatedButton.icon(
+                onPressed: _authenticate,
+                icon: const Icon(Icons.fingerprint),
+                label: const Text('Desbloquear'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(200, 48),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -68,10 +165,25 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Lançamentos do mês selecionado
   List<TransactionItem> get _filteredTransactions {
     return _allTransactions.where((t) {
       return t.date.year == _selectedMonth.year && t.date.month == _selectedMonth.month;
     }).toList();
+  }
+
+  // Acumulado de meses anteriores ao mês selecionado
+  double get _accumulatedPreviousBalance {
+    final firstDayOfSelectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month, 1);
+    final previousTransactions = _allTransactions.where((t) => t.date.isBefore(firstDayOfSelectedMonth));
+    
+    double income = previousTransactions
+        .where((t) => t.type == TransactionType.income)
+        .fold(0.0, (sum, t) => sum + t.amount);
+    double expense = previousTransactions
+        .where((t) => t.type == TransactionType.expense)
+        .fold(0.0, (sum, t) => sum + t.amount);
+    return income - expense;
   }
 
   double get _totalIncome => _filteredTransactions
@@ -82,7 +194,10 @@ class _HomeScreenState extends State<HomeScreen> {
       .where((t) => t.type == TransactionType.expense)
       .fold(0.0, (sum, t) => sum + t.amount);
 
-  double get _currentBalance => _totalIncome - _totalExpense;
+  double get _currentMonthBalance => _totalIncome - _totalExpense;
+
+  // Saldo total acumulado até o fim do mês selecionado
+  double get _consolidatedBalance => _accumulatedPreviousBalance + _currentMonthBalance;
 
   Map<String, double> get _expenseByCategory {
     final map = <String, double>{};
@@ -131,6 +246,72 @@ class _HomeScreenState extends State<HomeScreen> {
         onSaved: _refreshTransactions,
       ),
     );
+  }
+
+  // Exportar backup (JSON / CSV)
+  Future<void> _exportBackup(String format) async {
+    if (_allTransactions.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nenhum dado para exportar.')),
+      );
+      return;
+    }
+
+    try {
+      final nowStr = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+      if (format == 'csv') {
+        final buffer = StringBuffer();
+        buffer.writeln('ID,Título,Valor,Data,Categoria,Tipo');
+        for (final t in _allTransactions) {
+          buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}",${t.type.name}');
+        }
+        await Share.shareXFiles(
+          [XFile.fromData(utf8.encode(buffer.toString()), mimeType: 'text/csv', name: 'backup_financas_$nowStr.csv')],
+          subject: 'Backup Sou Mais Controlado (CSV)',
+        );
+      } else {
+        final list = _allTransactions.map((t) => t.toMap()).toList();
+        final jsonStr = jsonEncode(list);
+        await Share.shareXFiles(
+          [XFile.fromData(utf8.encode(jsonStr), mimeType: 'application/json', name: 'backup_financas_$nowStr.json')],
+          subject: 'Backup Sou Mais Controlado (JSON)',
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao exportar backup: $e')),
+      );
+    }
+  }
+
+  // Restaurar backup de arquivo JSON
+  Future<void> _restoreBackup() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        final file = File(result.files.single.path!);
+        final content = await file.readAsString();
+        final List<dynamic> decoded = jsonDecode(content);
+
+        final items = decoded.map((item) => TransactionItem.fromMap(Map<String, dynamic>.from(item))).toList();
+        
+        await DBHelper.instance.replaceAllTransactions(items);
+        _refreshTransactions();
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sucesso! ${items.length} lançamentos restaurados.')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao restaurar backup: $e')),
+      );
+    }
   }
 
   void _showSetBudgetDialog() {
@@ -203,10 +384,18 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: _showSetBudgetDialog,
             tooltip: 'Definir Meta de Gastos',
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _refreshTransactions,
-            tooltip: 'Recarregar',
+          PopupMenuButton<String>(
+            tooltip: 'Opções e Backup',
+            onSelected: (val) {
+              if (val == 'export_csv') _exportBackup('csv');
+              if (val == 'export_json') _exportBackup('json');
+              if (val == 'restore') _restoreBackup();
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'export_csv', child: Text('Exportar Planilha (CSV)')),
+              const PopupMenuItem(value: 'export_json', child: Text('Exportar Backup Completo (JSON)')),
+              const PopupMenuItem(value: 'restore', child: Text('Restaurar Backup (JSON)')),
+            ],
           ),
         ],
       ),
@@ -245,75 +434,80 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return Column(
+    return ListView(
+      padding: EdgeInsets.zero,
       children: [
         _buildMonthSelector(monthFormat),
-        _buildSummaryCard(formatCurrency),
+        _buildConsolidatedSummaryCard(formatCurrency),
         _buildBudgetProgressBar(formatCurrency),
-        if (_expenseByCategory.isNotEmpty) _buildCategoryBreakdown(formatCurrency),
+        if (_expenseByCategory.isNotEmpty) ...[
+          _buildPieChartSection(formatCurrency),
+          _buildCategoryBreakdown(formatCurrency),
+        ],
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Lançamentos (Toque para editar)',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
-            ),
+          child: Text(
+            'Lançamentos (Toque para editar)',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
           ),
         ),
-        Expanded(
-          child: _filteredTransactions.isEmpty
-              ? const Center(
+        _filteredTransactions.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.all(32.0),
+                child: Center(
                   child: Text(
                     'Nenhum lançamento neste mês.',
                     style: TextStyle(color: Colors.grey),
                   ),
-                )
-              : ListView.builder(
-                  itemCount: _filteredTransactions.length,
-                  itemBuilder: (ctx, index) {
-                    final item = _filteredTransactions[index];
-                    final isIncome = item.type == TransactionType.income;
-                    final categoryIcon = _getCategoryIcon(item.category);
-
-                    return Dismissible(
-                      key: Key('${item.id}_${item.title}'),
-                      direction: DismissDirection.endToStart,
-                      background: Container(
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.only(right: 20),
-                        color: Colors.redAccent.withOpacity(0.8),
-                        child: const Icon(Icons.delete, color: Colors.white),
-                      ),
-                      onDismissed: (direction) => _deleteTransaction(item),
-                      child: ListTile(
-                        onTap: () => _openTransactionModal(item),
-                        leading: CircleAvatar(
-                          backgroundColor: isIncome
-                              ? Colors.green.withOpacity(0.2)
-                              : Colors.red.withOpacity(0.2),
-                          child: Icon(
-                            categoryIcon,
-                            color: isIncome ? Colors.green : Colors.redAccent,
-                            size: 20,
-                          ),
-                        ),
-                        title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w500)),
-                        subtitle: Text(
-                            '${item.category} • ${DateFormat('dd/MM/yyyy').format(item.date)}'),
-                        trailing: Text(
-                          '${isIncome ? '+' : '-'} ${formatCurrency.format(item.amount)}',
-                          style: TextStyle(
-                            color: isIncome ? Colors.green : Colors.redAccent,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
                 ),
-        ),
+              )
+            : ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _filteredTransactions.length,
+                itemBuilder: (ctx, index) {
+                  final item = _filteredTransactions[index];
+                  final isIncome = item.type == TransactionType.income;
+                  final categoryIcon = _getCategoryIcon(item.category);
+
+                  return Dismissible(
+                    key: Key('${item.id}_${item.title}'),
+                    direction: DismissDirection.endToStart,
+                    background: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.only(right: 20),
+                      color: Colors.redAccent.withOpacity(0.8),
+                      child: const Icon(Icons.delete, color: Colors.white),
+                    ),
+                    onDismissed: (direction) => _deleteTransaction(item),
+                    child: ListTile(
+                      onTap: () => _openTransactionModal(item),
+                      leading: CircleAvatar(
+                        backgroundColor: isIncome
+                            ? Colors.green.withOpacity(0.2)
+                            : Colors.red.withOpacity(0.2),
+                        child: Icon(
+                          categoryIcon,
+                          color: isIncome ? Colors.green : Colors.redAccent,
+                          size: 20,
+                        ),
+                      ),
+                      title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w500)),
+                      subtitle: Text(
+                          '${item.category} • ${DateFormat('dd/MM/yyyy').format(item.date)}'),
+                      trailing: Text(
+                        '${isIncome ? '+' : '-'} ${formatCurrency.format(item.amount)}',
+                        style: TextStyle(
+                          color: isIncome ? Colors.green : Colors.redAccent,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+        const SizedBox(height: 80), // Espaço para não cobrir o FAB
       ],
     );
   }
@@ -343,21 +537,56 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildSummaryCard(NumberFormat formatter) {
+  // Card com Acumulado Anterior + Saldo do Mês + Consolidado Total
+  Widget _buildConsolidatedSummaryCard(NumberFormat formatter) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            const Text('Saldo do Mês', style: TextStyle(fontSize: 13, color: Colors.grey)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Acumulado Anterior', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    Text(
+                      formatter.format(_accumulatedPreviousBalance),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: _accumulatedPreviousBalance >= 0 ? Colors.greenAccent : Colors.redAccent,
+                      ),
+                    ),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text('Saldo do Mês', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    Text(
+                      formatter.format(_currentMonthBalance),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: _currentMonthBalance >= 0 ? Colors.greenAccent : Colors.redAccent,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const Divider(height: 18),
+            const Text('Saldo Consolidado Total', style: TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 4),
             Text(
-              formatter.format(_currentBalance),
+              formatter.format(_consolidatedBalance),
               style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.bold,
-                color: _currentBalance >= 0 ? Colors.white : Colors.redAccent,
+                color: _consolidatedBalance >= 0 ? Colors.white : Colors.redAccent,
               ),
             ),
             const Divider(height: 18),
@@ -366,16 +595,16 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Column(
                   children: [
-                    const Text('Receitas', style: TextStyle(color: Colors.green, fontSize: 12)),
+                    const Text('Receitas (Mês)', style: TextStyle(color: Colors.green, fontSize: 11)),
                     Text(formatter.format(_totalIncome),
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                   ],
                 ),
                 Column(
                   children: [
-                    const Text('Despesas', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                    const Text('Despesas (Mês)', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
                     Text(formatter.format(_totalExpense),
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                   ],
                 ),
               ],
@@ -431,6 +660,38 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Gráfico de Pizza / Rosca Nativo
+  Widget _buildPieChartSection(NumberFormat formatter) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+      child: Card(
+        color: Colors.white.withOpacity(0.03),
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Gráfico de Despesas', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey)),
+              const SizedBox(height: 12),
+              Center(
+                child: SizedBox(
+                  width: 140,
+                  height: 140,
+                  child: CustomPaint(
+                    painter: DonutChartPainter(
+                      categoryExpenses: _expenseByCategory,
+                      total: _totalExpense,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCategoryBreakdown(NumberFormat formatter) {
     final total = _totalExpense;
     if (total <= 0) return const SizedBox.shrink();
@@ -473,6 +734,58 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+// Pintor gráfico do gráfico de Rosca (Donut Chart)
+class DonutChartPainter extends CustomPainter {
+  final Map<String, double> categoryExpenses;
+  final double total;
+
+  DonutChartPainter({required this.categoryExpenses, required this.total});
+
+  static final List<Color> _palette = [
+    Colors.teal,
+    Colors.orangeAccent,
+    Colors.purpleAccent,
+    Colors.blueAccent,
+    Colors.redAccent,
+    Colors.amber,
+    Colors.cyan,
+    Colors.pinkAccent,
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (total <= 0) return;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = min(size.width / 2, size.height / 2);
+    const strokeWidth = 24.0;
+
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth;
+
+    double startAngle = -pi / 2;
+    int colorIdx = 0;
+
+    for (final entry in categoryExpenses.entries) {
+      final sweepAngle = (entry.value / total) * 2 * pi;
+      paint.color = _palette[colorIdx % _palette.length];
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius - strokeWidth / 2),
+        startAngle,
+        sweepAngle,
+        false,
+        paint,
+      );
+      startAngle += sweepAngle;
+      colorIdx++;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
 class TransactionFormModal extends StatefulWidget {
