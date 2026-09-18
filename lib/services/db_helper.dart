@@ -43,6 +43,16 @@ class DBHelper {
     return await db.insert('transactions', item.toMap());
   }
 
+  Future<int> updateTransaction(TransactionItem item) async {
+    final db = await instance.database;
+    return await db.update(
+      'transactions',
+      item.toMap(),
+      where: 'id = ?',
+      whereArgs: [item.id],
+    );
+  }
+
   Future<List<TransactionItem>> getAllTransactions() async {
     final db = await instance.database;
     final result = await db.query('transactions', orderBy: 'date DESC');
