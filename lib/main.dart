@@ -176,7 +176,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
-  // Agrupa transações por dia (YYYY-MM-DD) ordenando decrescente
   Map<DateTime, List<TransactionItem>> get _groupedTransactions {
     final Map<DateTime, List<TransactionItem>> map = {};
     final list = [..._filteredTransactions];
@@ -217,14 +216,6 @@ class _HomeScreenState extends State<HomeScreen> {
   double get _currentMonthBalance => _totalIncome - _totalExpense;
 
   double get _consolidatedBalance => _accumulatedPreviousBalance + _currentMonthBalance;
-
-  Map<String, double> get _expenseByCategory {
-    final map = <String, double>{};
-    for (var t in _filteredTransactions.where((item) => item.type == TransactionType.expense)) {
-      map[t.category] = (map[t.category] ?? 0) + t.amount;
-    }
-    return map;
-  }
 
   void _changeMonth(int offset) {
     setState(() {
@@ -577,7 +568,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _buildConsolidatedSummaryCard(formatCurrency),
         _buildBudgetProgressBar(formatCurrency),
 
-        // Lista com layout estilo planilha igual à imagem
         if (grouped.isEmpty)
           const Padding(
             padding: EdgeInsets.all(32.0),
@@ -593,7 +583,6 @@ class _HomeScreenState extends State<HomeScreen> {
             final date = entry.key;
             final items = entry.value;
 
-            // Saldo do dia
             final dayIncome = items.where((t) => t.type == TransactionType.income).fold(0.0, (sum, t) => sum + t.amount);
             final dayExpense = items.where((t) => t.type == TransactionType.expense).fold(0.0, (sum, t) => sum + t.amount);
             final dayBalance = dayIncome - dayExpense;
@@ -608,19 +597,13 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Cabeçalho da data (ex: 01/09/2026, Terça-feira)
+                  // Cabeçalho da data limpo (sem ícone de recolher)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                     color: Colors.white.withOpacity(0.04),
-                    child: Row(
-                      children: [
-                        Icon(Icons.indeterminate_check_box_outlined, size: 14, color: Colors.teal.shade200),
-                        const SizedBox(width: 6),
-                        Text(
-                          dayTitle,
-                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, letterSpacing: 0.2),
-                        ),
-                      ],
+                    child: Text(
+                      dayTitle,
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, letterSpacing: 0.2),
                     ),
                   ),
 
@@ -639,7 +622,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: isEven ? Colors.transparent : Colors.white.withOpacity(0.035),
                         child: Row(
                           children: [
-                            // Checkbox
                             SizedBox(
                               width: 24,
                               height: 24,
@@ -652,8 +634,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             const SizedBox(width: 6),
-
-                            // Título / Descrição
                             Expanded(
                               flex: 4,
                               child: Text(
@@ -663,8 +643,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
                               ),
                             ),
-
-                            // Categoria
                             Expanded(
                               flex: 3,
                               child: Text(
@@ -674,8 +652,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(fontSize: 11.5, color: Colors.grey.shade400),
                               ),
                             ),
-
-                            // Conta / Cartão
                             Expanded(
                               flex: 3,
                               child: Text(
@@ -685,8 +661,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(fontSize: 11.5, color: Colors.grey.shade400),
                               ),
                             ),
-
-                            // Valor (+ ou -) com Check de Efetivado
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
