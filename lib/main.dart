@@ -221,17 +221,33 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // Manipulador de exclusão inteligente (com suporte a séries)
+  // Alterna o status efetivado com um toque
+  void _toggleTransactionEffective(TransactionItem item) async {
+    if (item.id == null) return;
+    final newStatus = !item.isCompleted;
+    await DBHelper.instance.toggleTransactionStatus(item.id!, newStatus);
+    _refreshTransactions();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          newStatus ? 'Lançamento marcado como efetivado!' : 'Lançamento marcado como pendente.',
+        ),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
   void _confirmDeleteTransaction(TransactionItem item) {
     if (item.id == null) return;
 
     if (item.groupId == null) {
-      // Transação avulsa: exclusão direta
       _executeSingleDelete(item);
       return;
     }
 
-    // Se tiver groupId, abre opções de exclusão de série
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -494,9 +510,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (format == 'csv') {
         final file = File('${dir.path}/backup_financas_$nowStr.csv');
         final buffer = StringBuffer();
-        buffer.writeln('ID,Título,Valor,Data,Categoria,Conta_Cartao,GroupId,Tipo');
+        buffer.writeln('ID,Título,Valor,Data,Categoria,Conta_Cartao,GroupId,Efetivado,Tipo');
         for (final t in _allTransactions) {
-          buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}","${t.account}","${t.groupId ?? ''}",${t.type.name}');
+          buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}","${t.account}","${t.groupId ?? ''}",${t.isCompleted ? 1 : 0},${t.type.name}');
         }
         await file.writeAsString(buffer.toString());
         if (!mounted) return;
@@ -763,7 +779,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     direction: DismissDirection.endToStart,
                     confirmDismiss: (direction) async {
                       _confirmDeleteTransaction(item);
-                      return false; // O diálogo cuida da remoção
+                      return false;
                     },
                     background: Container(
                       alignment: Alignment.centerRight,
@@ -773,21 +789,57 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     child: ListTile(
                       onTap: () => _openTransactionModal(item),
-                      leading: CircleAvatar(
-                        backgroundColor: isIncome
-                            ? Colors.green.withOpacity(0.2)
-                            : Colors.red.withOpacity(0.2),
-                        child: Icon(
-                          categoryIcon,
-                          color: isIncome ? Colors.green : Colors.redAccent,
-                          size: 20,
-                        ),
+                      leading: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // CHECK BOX de Efetivação Direta
+                          IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            icon: Icon(
+                              item.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
+                              color: item.isCompleted ? Colors.tealAccent : Colors.grey,
+                              size: 24,
+                            ),
+                            tooltip: item.isCompleted ? 'Efetivado (Toque para marcar como pendente)' : 'Pendente (Toque para efetivar)',
+                            onPressed: () => _toggleTransactionEffective(item),
+                          ),
+                          const SizedBox(width: 8),
+                          CircleAvatar(
+                            backgroundColor: isIncome
+                                ? Colors.green.withOpacity(0.2)
+                                : Colors.red.withOpacity(0.2),
+                            child: Icon(
+                              categoryIcon,
+                              color: isIncome ? Colors.green : Colors.redAccent,
+                              size: 20,
+                            ),
+                          ),
+                        ],
                       ),
                       title: Row(
                         children: [
                           Expanded(
-                            child: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w500)),
+                            child: Text(
+                              item.title,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                color: item.isCompleted ? Colors.white : Colors.white70,
+                              ),
+                            ),
                           ),
+                          if (!item.isCompleted)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.orangeAccent.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'Pendente',
+                                style: TextStyle(fontSize: 10, color: Colors.orangeAccent, fontWeight: FontWeight.bold),
+                              ),
+                            ),
                           if (isRecurringOrInstallment)
                             Padding(
                               padding: const EdgeInsets.only(left: 4.0),
@@ -1163,13 +1215,12 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
   late String _selectedAccount;
   TransactionType _type = TransactionType.expense;
   late DateTime _chosenDate;
+  bool _isCompleted = true; // Check box no formulário
 
-  // Parcelado
   bool _isInstallment = false;
   int _installmentsCount = 2;
   bool _amountIsTotal = true;
 
-  // Recorrente Indefinido (Fixo)
   bool _isRecurring = false;
 
   final List<Map<String, dynamic>> _quickCategories = [
@@ -1194,6 +1245,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       _selectedAccount = item.account;
       _type = item.type;
       _chosenDate = item.date;
+      _isCompleted = item.isCompleted;
     } else {
       _titleController = TextEditingController();
       _amountController = TextEditingController();
@@ -1203,6 +1255,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       _chosenDate = (widget.defaultDate.year == now.year && widget.defaultDate.month == now.month)
           ? now
           : widget.defaultDate;
+      _isCompleted = true;
     }
   }
 
@@ -1276,6 +1329,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
         category: category,
         account: _selectedAccount,
         groupId: widget.existingItem!.groupId,
+        isCompleted: _isCompleted,
         type: _type,
       );
       await DBHelper.instance.updateTransaction(item);
@@ -1283,7 +1337,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       final generatedGroupId = DateTime.now().millisecondsSinceEpoch.toString();
 
       if (_isRecurring) {
-        // Projeta repetição indefinida (24 meses com mesmo groupId)
         final items = <TransactionItem>[];
         for (int i = 0; i < 24; i++) {
           final recurDate = _addMonths(_chosenDate, i);
@@ -1295,13 +1348,14 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               category: category,
               account: _selectedAccount,
               groupId: generatedGroupId,
+              // O primeiro mês segue o valor escolhido, os futuros começam como pendentes:
+              isCompleted: i == 0 ? _isCompleted : false,
               type: _type,
             ),
           );
         }
         await DBHelper.instance.insertMultipleTransactions(items);
       } else if (_type == TransactionType.expense && _isInstallment && _installmentsCount > 1) {
-        // Parcelamento fixo com groupId
         final installmentAmount = _amountIsTotal
             ? double.parse((rawAmount / _installmentsCount).toStringAsFixed(2))
             : rawAmount;
@@ -1317,19 +1371,21 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               category: category,
               account: _selectedAccount,
               groupId: generatedGroupId,
+              // Parcela 1 segue a escolha, as próximas parcelas começam pendentes:
+              isCompleted: i == 1 ? _isCompleted : false,
               type: TransactionType.expense,
             ),
           );
         }
         await DBHelper.instance.insertMultipleTransactions(items);
       } else {
-        // Lançamento comum avulso
         final item = TransactionItem(
           title: title,
           amount: rawAmount,
           date: _chosenDate,
           category: category,
           account: _selectedAccount,
+          isCompleted: _isCompleted,
           type: _type,
         );
         await DBHelper.instance.insertTransaction(item);
@@ -1434,9 +1490,19 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 ],
               ),
 
+              const SizedBox(height: 8),
+              // Check Box de Efetivado / Pago no formulário
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Lançamento Efetivado / Pago', style: TextStyle(fontWeight: FontWeight.w500)),
+                subtitle: Text(_isCompleted ? 'Transação já concretizada' : 'Transação pendente/futura'),
+                value: _isCompleted,
+                activeColor: Colors.teal,
+                onChanged: (val) => setState(() => _isCompleted = val ?? true),
+              ),
+
               if (!isEdit) ...[
-                const SizedBox(height: 8),
-                // Opção 1: Repetir Mensalmente (Fixo)
+                const SizedBox(height: 4),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Repetir todo mês (Fixo)', style: TextStyle(fontWeight: FontWeight.w500)),
@@ -1449,8 +1515,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                     });
                   },
                 ),
-
-                // Opção 2: Compra Parcelada (somente para despesas)
                 if (_type == TransactionType.expense && !_isRecurring) ...[
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
