@@ -25,7 +25,9 @@ jobs:
           channel: 'stable'
 
       - name: Gerar arquivos nativos do Android
-        run: flutter create --platforms=android .
+        run: |
+          flutter create --platforms=android .
+          sed -i 's/android:label=".*"/android:label="Sou Mais Controlado"/' android/app/src/main/AndroidManifest.xml
 
       - name: Baixar dependencias
         run: flutter pub get
