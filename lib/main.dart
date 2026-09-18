@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -221,7 +220,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // Alterna o status efetivado com um toque
   void _toggleTransactionEffective(TransactionItem item) async {
     if (item.id == null) return;
     final newStatus = !item.isCompleted;
@@ -613,30 +611,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  IconData _getCategoryIcon(String category) {
-    switch (category.toLowerCase()) {
-      case 'alimentação':
-        return Icons.restaurant;
-      case 'transporte':
-        return Icons.directions_car;
-      case 'moradia':
-      case 'casa':
-        return Icons.home;
-      case 'saúde':
-        return Icons.local_hospital;
-      case 'lazer':
-        return Icons.sports_esports;
-      case 'salário':
-        return Icons.account_balance_wallet;
-      case 'compras':
-        return Icons.shopping_bag;
-      case 'contas':
-        return Icons.receipt_long;
-      default:
-        return Icons.monetization_on;
-    }
-  }
-
   IconData _getAccountIcon(String account) {
     final acc = account.toLowerCase();
     if (acc.contains('cartão') || acc.contains('cartao') || acc.contains('crédito')) {
@@ -733,10 +707,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _buildAccountFilterBar(allAccountsList),
         _buildConsolidatedSummaryCard(formatCurrency),
         _buildBudgetProgressBar(formatCurrency),
-        if (_expenseByCategory.isNotEmpty) ...[
-          _buildPieChartSection(formatCurrency),
-          _buildCategoryBreakdown(formatCurrency),
-        ],
+        if (_expenseByCategory.isNotEmpty) _buildCategoryBreakdown(formatCurrency),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Row(
@@ -744,11 +715,11 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Text(
                 'Lançamentos (${_selectedAccountFilter})',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey),
               ),
               Text(
                 '${_filteredTransactions.length} item(ns)',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
               ),
             ],
           ),
@@ -771,7 +742,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 itemBuilder: (ctx, index) {
                   final item = _filteredTransactions[index];
                   final isIncome = item.type == TransactionType.income;
-                  final categoryIcon = _getCategoryIcon(item.category);
                   final isRecurringOrInstallment = item.groupId != null;
 
                   return Dismissible(
@@ -788,34 +758,22 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: const Icon(Icons.delete, color: Colors.white),
                     ),
                     child: ListTile(
+                      dense: true,
+                      visualDensity: VisualDensity.compact,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 0.0),
                       onTap: () => _openTransactionModal(item),
-                      leading: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // CHECK BOX de Efetivação Direta
-                          IconButton(
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            icon: Icon(
-                              item.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
-                              color: item.isCompleted ? Colors.tealAccent : Colors.grey,
-                              size: 24,
-                            ),
-                            tooltip: item.isCompleted ? 'Efetivado (Toque para marcar como pendente)' : 'Pendente (Toque para efetivar)',
-                            onPressed: () => _toggleTransactionEffective(item),
-                          ),
-                          const SizedBox(width: 8),
-                          CircleAvatar(
-                            backgroundColor: isIncome
-                                ? Colors.green.withOpacity(0.2)
-                                : Colors.red.withOpacity(0.2),
-                            child: Icon(
-                              categoryIcon,
-                              color: isIncome ? Colors.green : Colors.redAccent,
-                              size: 20,
-                            ),
-                          ),
-                        ],
+                      leading: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        icon: Icon(
+                          item.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
+                          color: item.isCompleted ? Colors.tealAccent : Colors.grey,
+                          size: 22,
+                        ),
+                        tooltip: item.isCompleted
+                            ? 'Efetivado (Toque para marcar como pendente)'
+                            : 'Pendente (Toque para efetivar)',
+                        onPressed: () => _toggleTransactionEffective(item),
                       ),
                       title: Row(
                         children: [
@@ -823,6 +781,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: Text(
                               item.title,
                               style: TextStyle(
+                                fontSize: 13.5,
                                 fontWeight: FontWeight.w500,
                                 color: item.isCompleted ? Colors.white : Colors.white70,
                               ),
@@ -830,29 +789,33 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           if (!item.isCompleted)
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              margin: const EdgeInsets.only(right: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                               decoration: BoxDecoration(
                                 color: Colors.orangeAccent.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: const Text(
                                 'Pendente',
-                                style: TextStyle(fontSize: 10, color: Colors.orangeAccent, fontWeight: FontWeight.bold),
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  color: Colors.orangeAccent,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           if (isRecurringOrInstallment)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 4.0),
-                              child: Icon(
-                                Icons.repeat,
-                                size: 14,
-                                color: Colors.teal.shade200,
-                              ),
+                            Icon(
+                              Icons.repeat,
+                              size: 13,
+                              color: Colors.teal.shade200,
                             ),
                         ],
                       ),
                       subtitle: Text(
-                          '${item.category} • ${item.account}\n${DateFormat('dd/MM/yyyy').format(item.date)}'),
+                        '${item.category} • ${item.account} • ${DateFormat('dd/MM/yyyy').format(item.date)}',
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -861,10 +824,13 @@ class _HomeScreenState extends State<HomeScreen> {
                             style: TextStyle(
                               color: isIncome ? Colors.green : Colors.redAccent,
                               fontWeight: FontWeight.bold,
-                              fontSize: 15,
+                              fontSize: 13.5,
                             ),
                           ),
+                          const SizedBox(width: 4),
                           IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
                             icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
                             onPressed: () => _confirmDeleteTransaction(item),
                           ),
@@ -1062,37 +1028,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildPieChartSection(NumberFormat formatter) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-      child: Card(
-        color: Colors.white.withOpacity(0.03),
-        child: Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Gráfico de Despesas', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey)),
-              const SizedBox(height: 12),
-              Center(
-                child: SizedBox(
-                  width: 140,
-                  height: 140,
-                  child: CustomPaint(
-                    painter: DonutChartPainter(
-                      categoryExpenses: _expenseByCategory,
-                      total: _totalExpense,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildCategoryBreakdown(NumberFormat formatter) {
     final total = _totalExpense;
     if (total <= 0) return const SizedBox.shrink();
@@ -1119,7 +1054,6 @@ class _HomeScreenState extends State<HomeScreen> {
               children: _expenseByCategory.entries.map((e) {
                 final pct = (e.value / total) * 100;
                 return Chip(
-                  avatar: Icon(_getCategoryIcon(e.key), size: 14),
                   label: Text(
                     '${e.key}: ${formatter.format(e.value)} (${pct.toStringAsFixed(0)}%)',
                     style: const TextStyle(fontSize: 10),
@@ -1135,57 +1069,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}
-
-class DonutChartPainter extends CustomPainter {
-  final Map<String, double> categoryExpenses;
-  final double total;
-
-  DonutChartPainter({required this.categoryExpenses, required this.total});
-
-  static final List<Color> _palette = [
-    Colors.teal,
-    Colors.orangeAccent,
-    Colors.purpleAccent,
-    Colors.blueAccent,
-    Colors.redAccent,
-    Colors.amber,
-    Colors.cyan,
-    Colors.pinkAccent,
-  ];
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (total <= 0) return;
-
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = min(size.width / 2, size.height / 2);
-    const strokeWidth = 24.0;
-
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth;
-
-    double startAngle = -pi / 2;
-    int colorIdx = 0;
-
-    for (final entry in categoryExpenses.entries) {
-      final sweepAngle = (entry.value / total) * 2 * pi;
-      paint.color = _palette[colorIdx % _palette.length];
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius - strokeWidth / 2),
-        startAngle,
-        sweepAngle,
-        false,
-        paint,
-      );
-      startAngle += sweepAngle;
-      colorIdx++;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
 class TransactionFormModal extends StatefulWidget {
@@ -1215,7 +1098,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
   late String _selectedAccount;
   TransactionType _type = TransactionType.expense;
   late DateTime _chosenDate;
-  bool _isCompleted = true; // Check box no formulário
+  bool _isCompleted = true;
 
   bool _isInstallment = false;
   int _installmentsCount = 2;
@@ -1348,7 +1231,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               category: category,
               account: _selectedAccount,
               groupId: generatedGroupId,
-              // O primeiro mês segue o valor escolhido, os futuros começam como pendentes:
               isCompleted: i == 0 ? _isCompleted : false,
               type: _type,
             ),
@@ -1371,7 +1253,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               category: category,
               account: _selectedAccount,
               groupId: generatedGroupId,
-              // Parcela 1 segue a escolha, as próximas parcelas começam pendentes:
               isCompleted: i == 1 ? _isCompleted : false,
               type: TransactionType.expense,
             ),
@@ -1489,9 +1370,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   ),
                 ],
               ),
-
               const SizedBox(height: 8),
-              // Check Box de Efetivado / Pago no formulário
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Lançamento Efetivado / Pago', style: TextStyle(fontWeight: FontWeight.w500)),
@@ -1500,7 +1379,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 activeColor: Colors.teal,
                 onChanged: (val) => setState(() => _isCompleted = val ?? true),
               ),
-
               if (!isEdit) ...[
                 const SizedBox(height: 4),
                 SwitchListTile(
@@ -1569,7 +1447,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   ],
                 ],
               ],
-
               const SizedBox(height: 8),
               const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 6),
