@@ -326,6 +326,9 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         },
         onSaved: _refreshTransactions,
+        onDeleteRequested: (itemToDelete) {
+          _confirmDeleteTransaction(itemToDelete);
+        },
       ),
     );
   }
@@ -597,7 +600,6 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Cabeçalho da data limpo (sem ícone de recolher)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                     color: Colors.white.withOpacity(0.04),
@@ -607,7 +609,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
-                  // Linhas da tabela (zebradas)
                   ...items.asMap().entries.map((itemEntry) {
                     final idx = itemEntry.key;
                     final item = itemEntry.value;
@@ -616,7 +617,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                     return InkWell(
                       onTap: () => _openTransactionModal(item),
-                      onLongPress: () => _confirmDeleteTransaction(item),
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                         color: isEven ? Colors.transparent : Colors.white.withOpacity(0.035),
@@ -686,7 +686,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     );
                   }),
 
-                  // Linha pontilhada e Saldo do Dia
                   Padding(
                     padding: const EdgeInsets.only(top: 4.0, bottom: 4.0, right: 12.0),
                     child: Row(
@@ -882,6 +881,7 @@ class TransactionFormModal extends StatefulWidget {
   final List<String> availableAccounts;
   final Function(String) onAccountCreated;
   final VoidCallback onSaved;
+  final Function(TransactionItem)? onDeleteRequested;
 
   const TransactionFormModal({
     super.key,
@@ -890,6 +890,7 @@ class TransactionFormModal extends StatefulWidget {
     required this.availableAccounts,
     required this.onAccountCreated,
     required this.onSaved,
+    this.onDeleteRequested,
   });
 
   @override
@@ -1260,11 +1261,41 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 trailing: TextButton(onPressed: _pickDate, child: const Text('Alterar')),
               ),
               const SizedBox(height: 10),
-              ElevatedButton(
-                onPressed: _submit,
-                style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
-                child: Text(isEdit ? 'Salvar Alterações' : 'Salvar Lançamento'),
-              ),
+
+              if (isEdit)
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                        side: const BorderSide(color: Colors.redAccent),
+                        minimumSize: const Size(110, 44),
+                      ),
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      label: const Text('Excluir'),
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        if (widget.onDeleteRequested != null && widget.existingItem != null) {
+                          widget.onDeleteRequested!(widget.existingItem!);
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _submit,
+                        style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+                        child: const Text('Salvar Alterações'),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                ElevatedButton(
+                  onPressed: _submit,
+                  style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+                  child: const Text('Salvar Lançamento'),
+                ),
             ],
           ),
         ),
