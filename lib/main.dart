@@ -6,7 +6,6 @@ import 'services/db_helper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Inicialização obrigatória para formatar datas e meses em português sem quebrar a tela:
   await initializeDateFormatting('pt_BR', null);
   runApp(const FinanceApp());
 }
@@ -41,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  double _monthlyBudget = 3000.0; // Teto de gastos padrão do mês
 
   @override
   void initState() {
@@ -120,15 +120,72 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _openAddTransactionModal() {
+  void _openTransactionModal([TransactionItem? existingItem]) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => AddTransactionModal(
+      builder: (ctx) => TransactionFormModal(
         defaultDate: _selectedMonth,
-        onAdded: _refreshTransactions,
+        existingItem: existingItem,
+        onSaved: _refreshTransactions,
       ),
     );
+  }
+
+  void _showSetBudgetDialog() {
+    final controller = TextEditingController(text: _monthlyBudget.toStringAsFixed(2));
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Definir Meta de Gastos'),
+        content: TextField(
+          controller: controller,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: 'Teto do Mês (R\$)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final val = double.tryParse(controller.text.replaceAll(',', '.')) ?? _monthlyBudget;
+              setState(() => _monthlyBudget = val);
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'alimentação':
+        return Icons.restaurant;
+      case 'transporte':
+        return Icons.directions_car;
+      case 'moradia':
+      case 'casa':
+        return Icons.home;
+      case 'saúde':
+        return Icons.local_hospital;
+      case 'lazer':
+        return Icons.sports_esports;
+      case 'salário':
+        return Icons.account_balance_wallet;
+      case 'compras':
+        return Icons.shopping_bag;
+      case 'contas':
+        return Icons.receipt_long;
+      default:
+        return Icons.monetization_on;
+    }
   }
 
   @override
@@ -141,6 +198,11 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Sou Mais Controlado'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.track_changes),
+            onPressed: _showSetBudgetDialog,
+            tooltip: 'Definir Meta de Gastos',
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshTransactions,
             tooltip: 'Recarregar',
@@ -149,7 +211,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: _buildBody(formatCurrency, monthFormat),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openAddTransactionModal,
+        onPressed: () => _openTransactionModal(),
         icon: const Icon(Icons.add),
         label: const Text('Novo'),
       ),
@@ -186,14 +248,15 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         _buildMonthSelector(monthFormat),
         _buildSummaryCard(formatCurrency),
+        _buildBudgetProgressBar(formatCurrency),
         if (_expenseByCategory.isNotEmpty) _buildCategoryBreakdown(formatCurrency),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              'Lançamentos',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              'Lançamentos (Toque para editar)',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
             ),
           ),
         ),
@@ -210,9 +273,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   itemBuilder: (ctx, index) {
                     final item = _filteredTransactions[index];
                     final isIncome = item.type == TransactionType.income;
+                    final categoryIcon = _getCategoryIcon(item.category);
 
                     return Dismissible(
-                      key: Key(item.id.toString()),
+                      key: Key('${item.id}_${item.title}'),
                       direction: DismissDirection.endToStart,
                       background: Container(
                         alignment: Alignment.centerRight,
@@ -222,16 +286,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       onDismissed: (direction) => _deleteTransaction(item),
                       child: ListTile(
+                        onTap: () => _openTransactionModal(item),
                         leading: CircleAvatar(
                           backgroundColor: isIncome
                               ? Colors.green.withOpacity(0.2)
                               : Colors.red.withOpacity(0.2),
                           child: Icon(
-                            isIncome ? Icons.arrow_upward : Icons.arrow_downward,
-                            color: isIncome ? Colors.green : Colors.red,
+                            categoryIcon,
+                            color: isIncome ? Colors.green : Colors.redAccent,
+                            size: 20,
                           ),
                         ),
-                        title: Text(item.title),
+                        title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w500)),
                         subtitle: Text(
                             '${item.category} • ${DateFormat('dd/MM/yyyy').format(item.date)}'),
                         trailing: Text(
@@ -239,6 +305,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           style: TextStyle(
                             color: isIncome ? Colors.green : Colors.redAccent,
                             fontWeight: FontWeight.bold,
+                            fontSize: 15,
                           ),
                         ),
                       ),
@@ -252,7 +319,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildMonthSelector(DateFormat monthFormat) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -263,7 +330,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           Text(
             monthFormat.format(_selectedMonth).toUpperCase(),
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right),
@@ -292,7 +359,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: _currentBalance >= 0 ? Colors.white : Colors.redAccent,
               ),
             ),
-            const Divider(height: 20),
+            const Divider(height: 18),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
@@ -318,37 +385,85 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildBudgetProgressBar(NumberFormat formatter) {
+    if (_monthlyBudget <= 0) return const SizedBox.shrink();
+    final progress = (_totalExpense / _monthlyBudget).clamp(0.0, 1.0);
+    final pctNumber = (_totalExpense / _monthlyBudget) * 100;
+
+    Color barColor = Colors.green;
+    if (pctNumber >= 100) {
+      barColor = Colors.redAccent;
+    } else if (pctNumber >= 75) {
+      barColor = Colors.orangeAccent;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Meta: ${formatter.format(_totalExpense)} de ${formatter.format(_monthlyBudget)}',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              Text(
+                '${pctNumber.toStringAsFixed(0)}%',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: barColor),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: progress,
+              color: barColor,
+              backgroundColor: Colors.white10,
+              minHeight: 7,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCategoryBreakdown(NumberFormat formatter) {
     final total = _totalExpense;
     if (total <= 0) return const SizedBox.shrink();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(12),
+          color: Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(10),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Maiores Gastos por Categoria',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey),
+              'Gastos por Categoria',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Wrap(
-              spacing: 8,
-              runSpacing: 6,
+              spacing: 6,
+              runSpacing: 4,
               children: _expenseByCategory.entries.map((e) {
                 final pct = (e.value / total) * 100;
                 return Chip(
+                  avatar: Icon(_getCategoryIcon(e.key), size: 14),
                   label: Text(
                     '${e.key}: ${formatter.format(e.value)} (${pct.toStringAsFixed(0)}%)',
-                    style: const TextStyle(fontSize: 11),
+                    style: const TextStyle(fontSize: 10),
                   ),
-                  backgroundColor: Colors.teal.withOpacity(0.15),
+                  backgroundColor: Colors.teal.withOpacity(0.12),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
                 );
               }).toList(),
             ),
@@ -359,34 +474,59 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class AddTransactionModal extends StatefulWidget {
+class TransactionFormModal extends StatefulWidget {
   final DateTime defaultDate;
-  final VoidCallback onAdded;
+  final TransactionItem? existingItem;
+  final VoidCallback onSaved;
 
-  const AddTransactionModal({
+  const TransactionFormModal({
     super.key,
     required this.defaultDate,
-    required this.onAdded,
+    this.existingItem,
+    required this.onSaved,
   });
 
   @override
-  State<AddTransactionModal> createState() => _AddTransactionModalState();
+  State<TransactionFormModal> createState() => _TransactionFormModalState();
 }
 
-class _AddTransactionModalState extends State<AddTransactionModal> {
-  final _titleController = TextEditingController();
-  final _amountController = TextEditingController();
-  final _categoryController = TextEditingController();
+class _TransactionFormModalState extends State<TransactionFormModal> {
+  late TextEditingController _titleController;
+  late TextEditingController _amountController;
+  late TextEditingController _categoryController;
   TransactionType _type = TransactionType.expense;
   late DateTime _chosenDate;
+
+  final List<Map<String, dynamic>> _quickCategories = [
+    {'name': 'Alimentação', 'icon': Icons.restaurant},
+    {'name': 'Transporte', 'icon': Icons.directions_car},
+    {'name': 'Moradia', 'icon': Icons.home},
+    {'name': 'Saúde', 'icon': Icons.local_hospital},
+    {'name': 'Lazer', 'icon': Icons.sports_esports},
+    {'name': 'Compras', 'icon': Icons.shopping_bag},
+    {'name': 'Contas', 'icon': Icons.receipt_long},
+    {'name': 'Salário', 'icon': Icons.account_balance_wallet},
+  ];
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _chosenDate = (widget.defaultDate.year == now.year && widget.defaultDate.month == now.month)
-        ? now
-        : widget.defaultDate;
+    final item = widget.existingItem;
+    if (item != null) {
+      _titleController = TextEditingController(text: item.title);
+      _amountController = TextEditingController(text: item.amount.toStringAsFixed(2));
+      _categoryController = TextEditingController(text: item.category);
+      _type = item.type;
+      _chosenDate = item.date;
+    } else {
+      _titleController = TextEditingController();
+      _amountController = TextEditingController();
+      _categoryController = TextEditingController(text: 'Alimentação');
+      final now = DateTime.now();
+      _chosenDate = (widget.defaultDate.year == now.year && widget.defaultDate.month == now.month)
+          ? now
+          : widget.defaultDate;
+    }
   }
 
   void _pickDate() async {
@@ -408,7 +548,9 @@ class _AddTransactionModalState extends State<AddTransactionModal> {
 
     if (title.isEmpty || amount <= 0 || category.isEmpty) return;
 
+    final isEdit = widget.existingItem != null;
     final item = TransactionItem(
+      id: widget.existingItem?.id,
       title: title,
       amount: amount,
       date: _chosenDate,
@@ -416,13 +558,20 @@ class _AddTransactionModalState extends State<AddTransactionModal> {
       type: _type,
     );
 
-    await DBHelper.instance.insertTransaction(item);
-    widget.onAdded();
+    if (isEdit) {
+      await DBHelper.instance.updateTransaction(item);
+    } else {
+      await DBHelper.instance.insertTransaction(item);
+    }
+
+    widget.onSaved();
     if (mounted) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isEdit = widget.existingItem != null;
+
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom + 16,
@@ -433,7 +582,15 @@ class _AddTransactionModalState extends State<AddTransactionModal> {
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Center(
+              child: Text(
+                isEdit ? 'Editar Lançamento' : 'Novo Lançamento',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 12),
             SegmentedButton<TransactionType>(
               segments: const [
                 ButtonSegment(value: TransactionType.expense, label: Text('Despesa')),
@@ -460,14 +617,34 @@ class _AddTransactionModalState extends State<AddTransactionModal> {
               ),
             ),
             const SizedBox(height: 12),
+            const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: _quickCategories.map((cat) {
+                final isSelected = _categoryController.text.toLowerCase() == (cat['name'] as String).toLowerCase();
+                return ChoiceChip(
+                  avatar: Icon(cat['icon'] as IconData, size: 16),
+                  label: Text(cat['name'] as String, style: const TextStyle(fontSize: 12)),
+                  selected: isSelected,
+                  onSelected: (selected) {
+                    if (selected) {
+                      setState(() => _categoryController.text = cat['name'] as String);
+                    }
+                  },
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _categoryController,
               decoration: const InputDecoration(
-                labelText: 'Categoria (ex: Alimentação, Lazer, Casa)',
+                labelText: 'Categoria Selecionada / Personalizada',
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.calendar_today),
@@ -481,7 +658,7 @@ class _AddTransactionModalState extends State<AddTransactionModal> {
             ElevatedButton(
               onPressed: _submit,
               style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-              child: const Text('Salvar Lançamento'),
+              child: Text(isEdit ? 'Salvar Alterações' : 'Salvar Lançamento'),
             ),
           ],
         ),
