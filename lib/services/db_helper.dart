@@ -20,7 +20,7 @@ class DBHelper {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -36,6 +36,7 @@ class DBHelper {
         category TEXT NOT NULL,
         account TEXT NOT NULL DEFAULT 'Conta Principal',
         groupId TEXT,
+        isCompleted INTEGER NOT NULL DEFAULT 1,
         type TEXT NOT NULL
       )
     ''');
@@ -47,6 +48,9 @@ class DBHelper {
     }
     if (oldVersion < 3) {
       await db.execute("ALTER TABLE transactions ADD COLUMN groupId TEXT");
+    }
+    if (oldVersion < 4) {
+      await db.execute("ALTER TABLE transactions ADD COLUMN isCompleted INTEGER NOT NULL DEFAULT 1");
     }
   }
 
@@ -74,6 +78,17 @@ class DBHelper {
     );
   }
 
+  // Alterna rapidamente o status de efetivado da transação
+  Future<int> toggleTransactionStatus(int id, bool isCompleted) async {
+    final db = await instance.database;
+    return await db.update(
+      'transactions',
+      {'isCompleted': isCompleted ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<List<TransactionItem>> getAllTransactions() async {
     final db = await instance.database;
     final result = await db.query('transactions', orderBy: 'date DESC');
@@ -85,7 +100,6 @@ class DBHelper {
     return await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
-  // Exclui toda a série desde o início
   Future<int> deleteGroupAll(String groupId) async {
     final db = await instance.database;
     return await db.delete(
@@ -95,7 +109,6 @@ class DBHelper {
     );
   }
 
-  // Exclui a série a partir de uma data em diante
   Future<int> deleteGroupFromDate(String groupId, DateTime fromDate) async {
     final db = await instance.database;
     return await db.delete(
