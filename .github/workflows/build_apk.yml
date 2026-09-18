@@ -35,6 +35,9 @@ jobs:
       - name: Baixar dependencias
         run: flutter pub get
 
+      - name: Gerar Icone do App
+        run: dart run flutter_launcher_icons
+
       - name: Compilar APK
         run: flutter build apk --release
 
