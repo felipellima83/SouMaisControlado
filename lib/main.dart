@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Inicialização obrigatória para formatar datas e meses em português sem quebrar a tela:
+  await initializeDateFormatting('pt_BR', null);
   runApp(const FinanceApp());
 }
 
@@ -36,6 +39,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<TransactionItem> _allTransactions = [];
   bool _isLoading = true;
+  String? _errorMessage;
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
 
   @override
@@ -45,15 +49,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _refreshTransactions() async {
-    setState(() => _isLoading = true);
-    final data = await DBHelper.instance.getAllTransactions();
     setState(() {
-      _allTransactions = data;
-      _isLoading = false;
+      _isLoading = true;
+      _errorMessage = null;
     });
+
+    try {
+      final data = await DBHelper.instance.getAllTransactions();
+      setState(() {
+        _allTransactions = data;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Erro ao carregar dados: $e';
+        _isLoading = false;
+      });
+    }
   }
 
-  // Filtra transações apenas do mês/ano selecionado
   List<TransactionItem> get _filteredTransactions {
     return _allTransactions.where((t) {
       return t.date.year == _selectedMonth.year && t.date.month == _selectedMonth.month;
@@ -133,79 +147,106 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                _buildMonthSelector(monthFormat),
-                _buildSummaryCard(formatCurrency),
-                if (_expenseByCategory.isNotEmpty) _buildCategoryBreakdown(formatCurrency),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Lançamentos',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: _filteredTransactions.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'Nenhum lançamento neste mês.',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: _filteredTransactions.length,
-                          itemBuilder: (ctx, index) {
-                            final item = _filteredTransactions[index];
-                            final isIncome = item.type == TransactionType.income;
-
-                            return Dismissible(
-                              key: Key(item.id.toString()),
-                              direction: DismissDirection.endToStart,
-                              background: Container(
-                                alignment: Alignment.centerRight,
-                                padding: const EdgeInsets.only(right: 20),
-                                color: Colors.redAccent.withOpacity(0.8),
-                                child: const Icon(Icons.delete, color: Colors.white),
-                              ),
-                              onDismissed: (direction) => _deleteTransaction(item),
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: isIncome
-                                      ? Colors.green.withOpacity(0.2)
-                                      : Colors.red.withOpacity(0.2),
-                                  child: Icon(
-                                    isIncome ? Icons.arrow_upward : Icons.arrow_downward,
-                                    color: isIncome ? Colors.green : Colors.red,
-                                  ),
-                                ),
-                                title: Text(item.title),
-                                subtitle: Text(
-                                    '${item.category} • ${DateFormat('dd/MM/yyyy').format(item.date)}'),
-                                trailing: Text(
-                                  '${isIncome ? '+' : '-'} ${formatCurrency.format(item.amount)}',
-                                  style: TextStyle(
-                                    color: isIncome ? Colors.green : Colors.redAccent,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
+      body: _buildBody(formatCurrency, monthFormat),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _openAddTransactionModal,
         icon: const Icon(Icons.add),
         label: const Text('Novo'),
       ),
+    );
+  }
+
+  Widget _buildBody(NumberFormat formatCurrency, DateFormat monthFormat) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_errorMessage != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+              const SizedBox(height: 12),
+              Text(_errorMessage!, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _refreshTransactions,
+                child: const Text('Tentar Novamente'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        _buildMonthSelector(monthFormat),
+        _buildSummaryCard(formatCurrency),
+        if (_expenseByCategory.isNotEmpty) _buildCategoryBreakdown(formatCurrency),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Lançamentos',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+        Expanded(
+          child: _filteredTransactions.isEmpty
+              ? const Center(
+                  child: Text(
+                    'Nenhum lançamento neste mês.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: _filteredTransactions.length,
+                  itemBuilder: (ctx, index) {
+                    final item = _filteredTransactions[index];
+                    final isIncome = item.type == TransactionType.income;
+
+                    return Dismissible(
+                      key: Key(item.id.toString()),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        color: Colors.redAccent.withOpacity(0.8),
+                        child: const Icon(Icons.delete, color: Colors.white),
+                      ),
+                      onDismissed: (direction) => _deleteTransaction(item),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: isIncome
+                              ? Colors.green.withOpacity(0.2)
+                              : Colors.red.withOpacity(0.2),
+                          child: Icon(
+                            isIncome ? Icons.arrow_upward : Icons.arrow_downward,
+                            color: isIncome ? Colors.green : Colors.red,
+                          ),
+                        ),
+                        title: Text(item.title),
+                        subtitle: Text(
+                            '${item.category} • ${DateFormat('dd/MM/yyyy').format(item.date)}'),
+                        trailing: Text(
+                          '${isIncome ? '+' : '-'} ${formatCurrency.format(item.amount)}',
+                          style: TextStyle(
+                            color: isIncome ? Colors.green : Colors.redAccent,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 
