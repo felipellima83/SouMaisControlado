@@ -818,6 +818,11 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
   TransactionType _type = TransactionType.expense;
   late DateTime _chosenDate;
 
+  // Variáveis para compras parceladas
+  bool _isInstallment = false;
+  int _installmentsCount = 2;
+  bool _amountIsTotal = true; // true = Valor informado é o Total; false = Valor informado é da Parcela
+
   final List<Map<String, dynamic>> _quickCategories = [
     {'name': 'Alimentação', 'icon': Icons.restaurant},
     {'name': 'Transporte', 'icon': Icons.directions_car},
@@ -862,27 +867,62 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
     }
   }
 
+  // Avança n meses respeitando os dias do mês
+  DateTime _addMonths(DateTime date, int months) {
+    var destYear = date.year + (date.month - 1 + months) ~/ 12;
+    var destMonth = (date.month - 1 + months) % 12 + 1;
+    var daysInDestMonth = DateTime(destYear, destMonth + 1, 0).day;
+    var destDay = min(date.day, daysInDestMonth);
+    return DateTime(destYear, destMonth, destDay, date.hour, date.minute, date.second);
+  }
+
   void _submit() async {
     final title = _titleController.text.trim();
-    final amount = double.tryParse(_amountController.text.replaceAll(',', '.')) ?? 0.0;
+    final rawAmount = double.tryParse(_amountController.text.replaceAll(',', '.')) ?? 0.0;
     final category = _categoryController.text.trim();
 
-    if (title.isEmpty || amount <= 0 || category.isEmpty) return;
+    if (title.isEmpty || rawAmount <= 0 || category.isEmpty) return;
 
     final isEdit = widget.existingItem != null;
-    final item = TransactionItem(
-      id: widget.existingItem?.id,
-      title: title,
-      amount: amount,
-      date: _chosenDate,
-      category: category,
-      type: _type,
-    );
 
     if (isEdit) {
+      final item = TransactionItem(
+        id: widget.existingItem!.id,
+        title: title,
+        amount: rawAmount,
+        date: _chosenDate,
+        category: category,
+        type: _type,
+      );
       await DBHelper.instance.updateTransaction(item);
     } else {
-      await DBHelper.instance.insertTransaction(item);
+      // Se for Despesa e o usuário marcou Parcelado
+      if (_type == TransactionType.expense && _isInstallment && _installmentsCount > 1) {
+        final installmentAmount = _amountIsTotal
+            ? double.parse((rawAmount / _installmentsCount).toStringAsFixed(2))
+            : rawAmount;
+
+        for (int i = 1; i <= _installmentsCount; i++) {
+          final installmentDate = _addMonths(_chosenDate, i - 1);
+          final item = TransactionItem(
+            title: '$title ($i/$_installmentsCount)',
+            amount: installmentAmount,
+            date: installmentDate,
+            category: category,
+            type: TransactionType.expense,
+          );
+          await DBHelper.instance.insertTransaction(item);
+        }
+      } else {
+        final item = TransactionItem(
+          title: title,
+          amount: rawAmount,
+          date: _chosenDate,
+          category: category,
+          type: _type,
+        );
+        await DBHelper.instance.insertTransaction(item);
+      }
     }
 
     widget.onSaved();
@@ -922,13 +962,20 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   ButtonSegment(value: TransactionType.income, label: Text('Receita')),
                 ],
                 selected: {_type},
-                onSelectionChanged: (newVal) => setState(() => _type = newVal.first),
+                onSelectionChanged: (newVal) {
+                  setState(() {
+                    _type = newVal.first;
+                    if (_type == TransactionType.income) {
+                      _isInstallment = false;
+                    }
+                  });
+                },
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _titleController,
                 decoration: const InputDecoration(
-                  labelText: 'Descrição (ex: Supermercado, Salário)',
+                  labelText: 'Descrição (ex: Smartphone, Supermercado)',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -936,12 +983,71 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               TextField(
                 controller: _amountController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Valor (R\$)',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: (_isInstallment && !_amountIsTotal)
+                      ? 'Valor de Cada Parcela (R\$)'
+                      : 'Valor ${(_isInstallment) ? 'Total da Compra' : ''} (R\$)',
+                  border: const OutlineInputBorder(),
                 ),
               ),
-              const SizedBox(height: 12),
+
+              // Bloco de Parcelamento (visível apenas para Despesa em novos lançamentos)
+              if (_type == TransactionType.expense && !isEdit) ...[
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Compra Parcelada?', style: TextStyle(fontWeight: FontWeight.w500)),
+                  subtitle: Text(_isInstallment ? 'Dividir em múltiplos meses' : 'Lançamento à vista'),
+                  value: _isInstallment,
+                  onChanged: (val) => setState(() => _isInstallment = val),
+                ),
+                if (_isInstallment) ...[
+                  Row(
+                    children: [
+                      const Text('Número de parcelas: ', style: TextStyle(fontSize: 13)),
+                      const SizedBox(width: 8),
+                      DropdownButton<int>(
+                        value: _installmentsCount,
+                        dropdownColor: Colors.grey[900],
+                        items: List.generate(35, (index) => index + 2).map((num) {
+                          return DropdownMenuItem<int>(
+                            value: num,
+                            child: Text('${num}x', style: const TextStyle(fontWeight: FontWeight.bold)),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setState(() => _installmentsCount = val);
+                        },
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: RadioListTile<bool>(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Valor Total', style: TextStyle(fontSize: 12)),
+                          value: true,
+                          groupValue: _amountIsTotal,
+                          onChanged: (val) => setState(() => _amountIsTotal = val!),
+                        ),
+                      ),
+                      Expanded(
+                        child: RadioListTile<bool>(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Valor da Parcela', style: TextStyle(fontSize: 12)),
+                          value: false,
+                          groupValue: _amountIsTotal,
+                          onChanged: (val) => setState(() => _amountIsTotal = val!),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 16),
+                ],
+              ],
+
+              const SizedBox(height: 8),
               const Text('Categorias Rápidas:', style: TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 6),
               Wrap(
@@ -974,7 +1080,11 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.calendar_today),
-                title: Text('Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'),
+                title: Text(
+                  _isInstallment
+                      ? '1ª Parcela em: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}'
+                      : 'Data: ${DateFormat('dd/MM/yyyy').format(_chosenDate)}',
+                ),
                 trailing: TextButton(
                   onPressed: _pickDate,
                   child: const Text('Alterar Data'),
@@ -986,7 +1096,13 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size.fromHeight(48),
                 ),
-                child: Text(isEdit ? 'Salvar Alterações' : 'Salvar Lançamento'),
+                child: Text(
+                  isEdit
+                      ? 'Salvar Alterações'
+                      : (_isInstallment
+                          ? 'Gerar $_installmentsCount Parcelas'
+                          : 'Salvar Lançamento'),
+                ),
               ),
               const SizedBox(height: 12),
             ],
