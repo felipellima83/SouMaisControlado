@@ -10,9 +10,27 @@ import 'package:quick_actions/quick_actions.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
+// Variável global para capturar o atalho mesmo antes do Flutter desenhar a tela
+String? globalShortcutType;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('pt_BR', null);
+
+  // Inicializa o QuickActions no momento zero do app
+  const quickActions = QuickActions();
+  quickActions.initialize((type) {
+    globalShortcutType = type;
+  });
+
+  quickActions.setShortcutItems(<ShortcutItem>[
+    const ShortcutItem(
+      type: 'action_new_expense',
+      localizedTitle: 'Nova Despesa',
+      icon: 'ic_launcher',
+    ),
+  ]);
+
   runApp(const FinanceApp());
 }
 
@@ -43,33 +61,12 @@ class AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<AuthGate> {
   final LocalAuthentication _auth = LocalAuthentication();
-  final QuickActions _quickActions = const QuickActions();
   bool _isAuthenticated = false;
-  bool _openNewExpenseOnStart = false;
 
   @override
   void initState() {
     super.initState();
-    _setupQuickActions();
     _checkBiometrics();
-  }
-
-  void _setupQuickActions() {
-    _quickActions.initialize((shortcutType) {
-      if (shortcutType == 'action_new_expense') {
-        setState(() {
-          _openNewExpenseOnStart = true;
-        });
-      }
-    });
-
-    _quickActions.setShortcutItems(<ShortcutItem>[
-      const ShortcutItem(
-        type: 'action_new_expense',
-        localizedTitle: 'Nova Despesa',
-        icon: 'ic_launcher',
-      ),
-    ]);
   }
 
   Future<void> _checkBiometrics() async {
@@ -94,14 +91,16 @@ class _AuthGateState extends State<AuthGate> {
           stickyAuth: true,
         ),
       );
-      setState(() => _isAuthenticated = authenticated);
+      if (mounted) {
+        setState(() => _isAuthenticated = authenticated);
+      }
     } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
     if (_isAuthenticated) {
-      return HomeScreen(autoOpenNewExpense: _openNewExpenseOnStart);
+      return const HomeScreen();
     }
 
     return Scaffold(
@@ -139,8 +138,7 @@ class _AuthGateState extends State<AuthGate> {
 }
 
 class HomeScreen extends StatefulWidget {
-  final bool autoOpenNewExpense;
-  const HomeScreen({super.key, this.autoOpenNewExpense = false});
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -154,7 +152,6 @@ class _HomeScreenState extends State<HomeScreen> {
   double _monthlyBudget = 3000.0;
   String _selectedAccountFilter = 'Todas';
 
-  // Busca rápida
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -169,12 +166,24 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _refreshTransactions().then((_) {
-      if (widget.autoOpenNewExpense) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _openTransactionModal();
-        });
+      _checkPendingShortcut();
+    });
+
+    // Registra listener para quando o app já estiver aberto e o usuário tocar no atalho
+    const QuickActions().initialize((type) {
+      if (type == 'action_new_expense') {
+        _openTransactionModal();
       }
     });
+  }
+
+  void _checkPendingShortcut() {
+    if (globalShortcutType == 'action_new_expense') {
+      globalShortcutType = null; // limpa após consumir
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _openTransactionModal();
+      });
+    }
   }
 
   Future<void> _refreshTransactions() async {
@@ -947,7 +956,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// Opções de Tipo no Formulário: Despesa, Receita ou Transferência
 enum FormMode { expense, income, transfer }
 
 class TransactionFormModal extends StatefulWidget {
@@ -1081,7 +1089,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
 
     final isEdit = widget.existingItem != null;
 
-    // Caso seja TRANSFERÊNCIA
     if (_formMode == FormMode.transfer && !isEdit) {
       if (_selectedAccount == _destinationAccount) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1096,7 +1103,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
 
       final groupId = DateTime.now().millisecondsSinceEpoch.toString();
 
-      // Saída da conta de origem (Expense)
       final outItem = TransactionItem(
         title: transferTitle,
         amount: rawAmount,
@@ -1108,7 +1114,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
         type: TransactionType.expense,
       );
 
-      // Entrada na conta de destino (Income)
       final inItem = TransactionItem(
         title: transferTitle,
         amount: rawAmount,
@@ -1234,7 +1239,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               ),
               const SizedBox(height: 10),
 
-              // Seletor com 3 Modos: Despesa, Receita ou Transferência
               Center(
                 child: SegmentedButton<FormMode>(
                   segments: [
@@ -1275,7 +1279,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
               ),
               const SizedBox(height: 10),
 
-              // Se for Transferência, exibe Conta Origem e Conta Destino
               if (_formMode == FormMode.transfer) ...[
                 Row(
                   children: [
