@@ -7,7 +7,8 @@ class TransactionItem {
   final DateTime date;
   final String category;
   final String account;
-  final String? groupId; // Identificador da série (parcelada ou recorrente)
+  final String? groupId;
+  final bool isCompleted;
   final TransactionType type;
 
   TransactionItem({
@@ -18,6 +19,7 @@ class TransactionItem {
     required this.category,
     this.account = 'Conta Principal',
     this.groupId,
+    this.isCompleted = true,
     required this.type,
   });
 
@@ -30,6 +32,7 @@ class TransactionItem {
       'category': category,
       'account': account,
       'groupId': groupId,
+      'isCompleted': isCompleted ? 1 : 0,
       'type': type == TransactionType.income ? 'income' : 'expense',
     };
   }
@@ -43,6 +46,7 @@ class TransactionItem {
       category: map['category'] as String,
       account: (map['account'] as String?) ?? 'Conta Principal',
       groupId: map['groupId'] as String?,
+      isCompleted: (map['isCompleted'] as int? ?? 1) == 1,
       type: map['type'] == 'income' ? TransactionType.income : TransactionType.expense,
     );
   }
