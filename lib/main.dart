@@ -7,17 +7,18 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:quick_actions/quick_actions.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
-// Variável global para capturar o atalho mesmo antes do Flutter desenhar a tela
 String? globalShortcutType;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('pt_BR', null);
 
-  // Inicializa o QuickActions no momento zero do app
   const quickActions = QuickActions();
   quickActions.initialize((type) {
     globalShortcutType = type;
@@ -85,7 +86,7 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> _authenticate() async {
     try {
       final authenticated = await _auth.authenticate(
-        localizedReason: 'Autentique-se para acessar o Sou Mais Controlado',
+        localizedReason: 'Autentique-se para aceder ao Sou Mais Controlado',
         options: const AuthenticationOptions(
           biometricOnly: false,
           stickyAuth: true,
@@ -118,7 +119,7 @@ class _AuthGateState extends State<AuthGate> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Aplicativo bloqueado para sua privacidade.',
+                'Aplicação bloqueada para sua privacidade.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey),
               ),
@@ -146,30 +147,24 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<TransactionItem> _allTransactions = [];
+  List<AccountInfo> _accountsMeta = [];
   bool _isLoading = true;
   String? _errorMessage;
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
-  double _monthlyBudget = 3000.0;
   String _selectedAccountFilter = 'Todas';
 
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
-  final List<String> _customAccounts = [
-    'Conta Principal',
-    'Carteira / Dinheiro',
-    'Cartão de Crédito',
-  ];
-
   @override
   void initState() {
     super.initState();
     _refreshTransactions().then((_) {
       _checkPendingShortcut();
+      _runAutomaticNightlyBackup();
     });
 
-    // Registra listener para quando o app já estiver aberto e o usuário tocar no atalho
     const QuickActions().initialize((type) {
       if (type == 'action_new_expense') {
         _openTransactionModal();
@@ -179,11 +174,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _checkPendingShortcut() {
     if (globalShortcutType == 'action_new_expense') {
-      globalShortcutType = null; // limpa após consumir
+      globalShortcutType = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _openTransactionModal();
       });
     }
+  }
+
+  // Backup automático executado entre as 22h e as 06h
+  Future<void> _runAutomaticNightlyBackup() async {
+    final now = DateTime.now();
+    final isNightWindow = (now.hour >= 22 || now.hour < 6);
+    if (!isNightWindow || _allTransactions.isEmpty) return;
+
+    final todayStr = DateFormat('yyyy-MM-dd').format(now);
+    final lastBackup = await DBHelper.instance.getSetting('last_auto_backup_date');
+
+    if (lastBackup != todayStr) {
+      await _executeBackupSilently();
+      await DBHelper.instance.setSetting('last_auto_backup_date', todayStr);
+    }
+  }
+
+  Future<void> _executeBackupSilently() async {
+    try {
+      final customPath = await DBHelper.instance.getSetting('backup_custom_path');
+      Directory dir;
+      if (customPath != null && Directory(customPath).existsSync()) {
+        dir = Directory(customPath);
+      } else {
+        dir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
+      }
+
+      final nowStr = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+      final file = File('${dir.path}/auto_backup_financas_$nowStr.json');
+      final list = _allTransactions.map((t) => t.toMap()).toList();
+      await file.writeAsString(jsonEncode(list));
+    } catch (_) {}
   }
 
   Future<void> _refreshTransactions() async {
@@ -194,13 +221,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final data = await DBHelper.instance.getAllTransactions();
-      for (final item in data) {
-        if (!_customAccounts.contains(item.account)) {
-          _customAccounts.add(item.account);
+      var meta = await DBHelper.instance.getAccountsMeta();
+
+      // Garante sincronização se existirem contas antigas não registadas nos metadados
+      final existingNames = meta.map((m) => m.name).toSet();
+      for (final t in data) {
+        if (!existingNames.contains(t.account)) {
+          final newInfo = AccountInfo(name: t.account);
+          await DBHelper.instance.saveAccountMeta(newInfo);
+          meta.add(newInfo);
+          existingNames.add(t.account);
         }
       }
+
       setState(() {
         _allTransactions = data;
+        _accountsMeta = meta;
         _isLoading = false;
       });
     } catch (e) {
@@ -226,10 +262,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
+  // Agrupamento por dia em ordem crescente (do dia 1º até ao fim do mês)
   Map<DateTime, List<TransactionItem>> get _groupedTransactions {
     final Map<DateTime, List<TransactionItem>> map = {};
     final list = [..._filteredTransactions];
-    list.sort((a, b) => b.date.compareTo(a.date));
+    list.sort((a, b) => a.date.compareTo(b.date));
 
     for (var t in list) {
       final dayKey = DateTime(t.date.year, t.date.month, t.date.day);
@@ -301,9 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Excluir Repetição'),
-        content: Text(
-          'O lançamento "${item.title}" faz parte de uma série.\n\nComo deseja excluir?',
-        ),
+        content: Text('O lançamento "${item.title}" faz parte de uma série.\n\nComo deseja excluir?'),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
           ListTile(
@@ -369,11 +404,9 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (ctx) => TransactionFormModal(
         defaultDate: _selectedMonth,
         existingItem: existingItem,
-        availableAccounts: _customAccounts,
+        availableAccounts: _accountsMeta,
         onAccountCreated: (newAcc) {
-          if (!_customAccounts.contains(newAcc)) {
-            setState(() => _customAccounts.add(newAcc));
-          }
+          _refreshTransactions();
         },
         onSaved: _refreshTransactions,
         onDeleteRequested: (itemToDelete) {
@@ -407,26 +440,39 @@ class _HomeScreenState extends State<HomeScreen> {
                 Flexible(
                   child: ListView.builder(
                     shrinkWrap: true,
-                    itemCount: _customAccounts.length,
+                    itemCount: _accountsMeta.length,
                     itemBuilder: (context, index) {
-                      final acc = _customAccounts[index];
-                      final count = _allTransactions.where((t) => t.account == acc).length;
+                      final acc = _accountsMeta[index];
+                      final count = _allTransactions.where((t) => t.account == acc.name).length;
 
                       return ListTile(
                         dense: true,
-                        leading: const Icon(Icons.account_balance_wallet, color: Colors.teal),
-                        title: Text(acc),
-                        subtitle: Text('$count lançamentos'),
+                        leading: Icon(
+                          acc.isCreditCard ? Icons.credit_card : Icons.account_balance_wallet,
+                          color: Colors.teal,
+                        ),
+                        title: Text(acc.name),
+                        subtitle: Text(
+                          acc.isCreditCard
+                              ? '$count lançamentos • Fecha dia ${acc.closingDay} / Vence dia ${acc.dueDay}'
+                              : '$count lançamentos',
+                        ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
                               icon: const Icon(Icons.edit, size: 18, color: Colors.tealAccent),
-                              onPressed: () => _showEditAccountDialog(acc, () => setModalState(() {})),
+                              onPressed: () => _showEditAccountDialog(acc, () {
+                                setModalState(() {});
+                                _refreshTransactions();
+                              }),
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
-                              onPressed: () => _showDeleteAccountDialog(acc, count, () => setModalState(() {})),
+                              onPressed: () => _showDeleteAccountDialog(acc.name, count, () {
+                                setModalState(() {});
+                                _refreshTransactions();
+                              }),
                             ),
                           ],
                         ),
@@ -442,33 +488,83 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showEditAccountDialog(String oldName, VoidCallback onUpdatedModal) {
-    final controller = TextEditingController(text: oldName);
+  void _showEditAccountDialog(AccountInfo account, VoidCallback onUpdatedModal) {
+    final nameCtrl = TextEditingController(text: account.name);
+    bool isCreditCard = account.isCreditCard;
+    int closingDay = account.closingDay;
+    int dueDay = account.dueDay;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Renomear Conta/Cartão'),
-        content: TextField(controller: controller, autofocus: true),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () async {
-              final newName = controller.text.trim();
-              if (newName.isNotEmpty && newName != oldName) {
-                await DBHelper.instance.renameAccount(oldName, newName);
-                setState(() {
-                  final idx = _customAccounts.indexOf(oldName);
-                  if (idx != -1) _customAccounts[idx] = newName;
-                  if (_selectedAccountFilter == oldName) _selectedAccountFilter = newName;
-                });
-                _refreshTransactions();
-                onUpdatedModal();
-                if (mounted) Navigator.of(ctx).pop();
-              }
-            },
-            child: const Text('Salvar'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Editar Conta / Cartão'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('É Cartão de Crédito?'),
+                  value: isCreditCard,
+                  onChanged: (val) => setDialogState(() => isCreditCard = val),
+                ),
+                if (isCreditCard) ...[
+                  Row(
+                    children: [
+                      const Text('Dia Fechamento: '),
+                      const Spacer(),
+                      DropdownButton<int>(
+                        value: closingDay,
+                        items: List.generate(31, (i) => i + 1).map((d) => DropdownMenuItem(value: d, child: Text('$d'))).toList(),
+                        onChanged: (val) => setDialogState(() => closingDay = val ?? 1),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      const Text('Dia Vencimento: '),
+                      const Spacer(),
+                      DropdownButton<int>(
+                        value: dueDay,
+                        items: List.generate(31, (i) => i + 1).map((d) => DropdownMenuItem(value: d, child: Text('$d'))).toList(),
+                        onChanged: (val) => setDialogState(() => dueDay = val ?? 10),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
           ),
-        ],
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
+            ElevatedButton(
+              onPressed: () async {
+                final newName = nameCtrl.text.trim();
+                if (newName.isNotEmpty) {
+                  if (newName != account.name) {
+                    await DBHelper.instance.renameAccount(account.name, newName);
+                  }
+                  final updatedInfo = AccountInfo(
+                    name: newName,
+                    isCreditCard: isCreditCard,
+                    closingDay: closingDay,
+                    dueDay: dueDay,
+                  );
+                  await DBHelper.instance.saveAccountMeta(updatedInfo);
+                  onUpdatedModal();
+                  if (mounted) Navigator.of(ctx).pop();
+                }
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -486,10 +582,8 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () async {
               await DBHelper.instance.deleteAccountAndTransactions(accountName);
               setState(() {
-                _customAccounts.remove(accountName);
                 if (_selectedAccountFilter == accountName) _selectedAccountFilter = 'Todas';
               });
-              _refreshTransactions();
               onUpdatedModal();
               if (mounted) Navigator.of(ctx).pop();
             },
@@ -497,6 +591,120 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // Configuração da Pasta de Backup Automático
+  void _showBackupFolderDialog() async {
+    final currentCustom = await DBHelper.instance.getSetting('backup_custom_path');
+    final defaultDir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
+    final ctrl = TextEditingController(text: currentCustom ?? defaultDir.path);
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Pasta de Backup Automático'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'O backup automático executa todas as noites (22h-06h). Pode personalizar a pasta de destino abaixo:',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              decoration: const InputDecoration(labelText: 'Caminho no Dispositivo', border: OutlineInputBorder()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () async {
+              final path = ctrl.text.trim();
+              if (path.isNotEmpty) {
+                await DBHelper.instance.setSetting('backup_custom_path', path);
+                if (mounted) Navigator.of(ctx).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Caminho de backup guardado com sucesso!')),
+                );
+              }
+            },
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Exportação formatada em PDF
+  Future<void> _exportMonthPDF() async {
+    final pdf = pw.Document();
+    final formatCurrency = NumberFormat.simpleCurrency(locale: 'pt_BR');
+    final monthTitle = DateFormat('MMMM yyyy', 'pt_BR').format(_selectedMonth).toUpperCase();
+
+    final items = [..._filteredTransactions];
+    items.sort((a, b) => a.date.compareTo(b.date));
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(24),
+        build: (pw.Context context) {
+          return [
+            pw.Header(
+              level: 0,
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Sou Mais Controlado - Extrato Mensal', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(monthTitle, style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 10),
+            pw.Container(
+              padding: const pw.EdgeInsets.all(10),
+              decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey400)),
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
+                children: [
+                  pw.Text('Acumulado Anterior: ${formatCurrency.format(_accumulatedPreviousBalance)}'),
+                  pw.Text('Receitas: ${formatCurrency.format(_totalIncome)}'),
+                  pw.Text('Despesas: ${formatCurrency.format(_totalExpense)}'),
+                  pw.Text('Saldo Final: ${formatCurrency.format(_consolidatedBalance)}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 15),
+            pw.TableHelper.fromTextArray(
+              headers: ['Data', 'Descrição', 'Categoria', 'Conta', 'Valor', 'Status'],
+              data: items.map((t) {
+                return [
+                  DateFormat('dd/MM/yyyy').format(t.date),
+                  t.title,
+                  t.category,
+                  t.account,
+                  '${t.type == TransactionType.income ? '+' : '-'} ${t.amount.toStringAsFixed(2).replaceAll('.', ',')}',
+                  t.isCompleted ? 'Efetivado' : 'Pendente',
+                ];
+              }).toList(),
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+              cellStyle: const pw.TextStyle(fontSize: 9),
+              headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              cellHeight: 22,
+            ),
+          ];
+        },
+      ),
+    );
+
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: 'Extrato_Financas_${DateFormat('yyyy_MM').format(_selectedMonth)}.pdf',
     );
   }
 
@@ -514,10 +722,16 @@ class _HomeScreenState extends State<HomeScreen> {
           buffer.writeln('${t.id},"${t.title}",${t.amount},${t.date.toIso8601String()},"${t.category}","${t.account}","${t.groupId ?? ''}",${t.isCompleted ? 1 : 0},${t.type.name}');
         }
         await file.writeAsString(buffer.toString());
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('CSV salvo em: ${file.path}')));
+        }
       } else {
         final file = File('${dir.path}/backup_financas_$nowStr.json');
         final list = _allTransactions.map((t) => t.toMap()).toList();
         await file.writeAsString(jsonEncode(list));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('JSON salvo em: ${file.path}')));
+        }
       }
     } catch (_) {}
   }
@@ -536,32 +750,6 @@ class _HomeScreenState extends State<HomeScreen> {
       await DBHelper.instance.replaceAllTransactions(items);
       _refreshTransactions();
     } catch (_) {}
-  }
-
-  void _showSetBudgetDialog() {
-    final controller = TextEditingController(text: _monthlyBudget.toStringAsFixed(2));
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Definir Meta de Gastos'),
-        content: TextField(
-          controller: controller,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Teto do Mês (R\$)', border: OutlineInputBorder()),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () {
-              final val = double.tryParse(controller.text.replaceAll(',', '.')) ?? _monthlyBudget;
-              setState(() => _monthlyBudget = val);
-              Navigator.of(ctx).pop();
-            },
-            child: const Text('Salvar'),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -601,20 +789,19 @@ class _HomeScreenState extends State<HomeScreen> {
               });
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.track_changes, size: 20),
-            onPressed: _showSetBudgetDialog,
-            tooltip: 'Meta',
-          ),
           PopupMenuButton<String>(
             onSelected: (val) {
               if (val == 'manage_accounts') _openManageAccountsDialog();
+              if (val == 'export_pdf') _exportMonthPDF();
+              if (val == 'backup_folder') _showBackupFolderDialog();
               if (val == 'export_csv') _exportBackup('csv');
               if (val == 'export_json') _exportBackup('json');
               if (val == 'restore') _restoreBackup();
             },
             itemBuilder: (context) => [
               const PopupMenuItem(value: 'manage_accounts', child: Text('Gerenciar Contas/Cartões')),
+              const PopupMenuItem(value: 'export_pdf', child: Text('Exportar Mês em PDF')),
+              const PopupMenuItem(value: 'backup_folder', child: Text('Pasta de Backup Automático')),
               const PopupMenuDivider(),
               const PopupMenuItem(value: 'export_csv', child: Text('Exportar Planilha (CSV)')),
               const PopupMenuItem(value: 'export_json', child: Text('Exportar Backup (JSON)')),
@@ -638,7 +825,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return Center(child: Text(_errorMessage!));
     }
 
-    final allAccountsList = ['Todas', ..._customAccounts];
+    final allAccountsList = ['Todas', ..._accountsMeta.map((a) => a.name)];
     final grouped = _groupedTransactions;
 
     return ListView(
@@ -647,7 +834,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _buildMonthSelector(monthFormat),
         _buildAccountFilterBar(allAccountsList),
         _buildConsolidatedSummaryCard(formatCurrency),
-        _buildBudgetProgressBar(formatCurrency),
 
         if (grouped.isEmpty)
           Padding(
@@ -742,24 +928,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(fontSize: 11.5, color: Colors.grey.shade400),
                               ),
                             ),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  '${isIncome ? '+' : '-'} ${item.amount.toStringAsFixed(2).replaceAll('.', ',')}',
-                                  style: TextStyle(
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.bold,
-                                    color: isIncome ? Colors.greenAccent.shade400 : Colors.redAccent.shade100,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Icon(
-                                  Icons.check,
-                                  size: 14,
-                                  color: item.isCompleted ? Colors.tealAccent : Colors.grey.shade700,
-                                ),
-                              ],
+                            // Valor com sinal (+ ou -) SEM o ícone de check duplicado à direita
+                            Text(
+                              '${isIncome ? '+' : '-'} ${item.amount.toStringAsFixed(2).replaceAll('.', ',')}',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.bold,
+                                color: isIncome ? Colors.greenAccent.shade400 : Colors.redAccent.shade100,
+                              ),
                             ),
                           ],
                         ),
@@ -909,51 +1085,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
-  Widget _buildBudgetProgressBar(NumberFormat formatter) {
-    if (_monthlyBudget <= 0) return const SizedBox.shrink();
-    final progress = (_totalExpense / _monthlyBudget).clamp(0.0, 1.0);
-    final pctNumber = (_totalExpense / _monthlyBudget) * 100;
-
-    Color barColor = Colors.green;
-    if (pctNumber >= 100) {
-      barColor = Colors.redAccent;
-    } else if (pctNumber >= 75) {
-      barColor = Colors.orangeAccent;
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 4.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Teto: ${formatter.format(_totalExpense)} / ${formatter.format(_monthlyBudget)}',
-                style: const TextStyle(fontSize: 10.5, color: Colors.grey),
-              ),
-              Text(
-                '${pctNumber.toStringAsFixed(0)}%',
-                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: barColor),
-              ),
-            ],
-          ),
-          const SizedBox(height: 3),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: progress,
-              color: barColor,
-              backgroundColor: Colors.white10,
-              minHeight: 5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 enum FormMode { expense, income, transfer }
@@ -961,7 +1092,7 @@ enum FormMode { expense, income, transfer }
 class TransactionFormModal extends StatefulWidget {
   final DateTime defaultDate;
   final TransactionItem? existingItem;
-  final List<String> availableAccounts;
+  final List<AccountInfo> availableAccounts;
   final Function(String) onAccountCreated;
   final VoidCallback onSaved;
   final Function(TransactionItem)? onDeleteRequested;
@@ -993,7 +1124,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
   bool _isInstallment = false;
   int _installmentsCount = 2;
   bool _amountIsTotal = true;
-
   bool _isRecurring = false;
 
   final List<String> _quickCategories = [
@@ -1016,7 +1146,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       _amountController = TextEditingController(text: item.amount.toStringAsFixed(2));
       _categoryController = TextEditingController(text: item.category);
       _selectedAccount = item.account;
-      _destinationAccount = widget.availableAccounts.firstWhere((a) => a != item.account, orElse: () => 'Carteira / Dinheiro');
+      _destinationAccount = widget.availableAccounts.map((a) => a.name).firstWhere((a) => a != item.account, orElse: () => 'Carteira / Dinheiro');
       _formMode = item.type == TransactionType.income ? FormMode.income : FormMode.expense;
       _chosenDate = item.date;
       _isCompleted = item.isCompleted;
@@ -1024,8 +1154,8 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       _titleController = TextEditingController();
       _amountController = TextEditingController();
       _categoryController = TextEditingController(text: 'Alimentação');
-      _selectedAccount = widget.availableAccounts.isNotEmpty ? widget.availableAccounts.first : 'Conta Principal';
-      _destinationAccount = widget.availableAccounts.length > 1 ? widget.availableAccounts[1] : 'Carteira / Dinheiro';
+      _selectedAccount = widget.availableAccounts.isNotEmpty ? widget.availableAccounts.first.name : 'Conta Principal';
+      _destinationAccount = widget.availableAccounts.length > 1 ? widget.availableAccounts[1].name : 'Carteira / Dinheiro';
       final now = DateTime.now();
       _chosenDate = (widget.defaultDate.year == now.year && widget.defaultDate.month == now.month)
           ? now
@@ -1054,31 +1184,95 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
     return DateTime(destYear, destMonth, destDay, date.hour, date.minute, date.second);
   }
 
+  // Calcula a data de fatura com base no fecho e vencimento
+  DateTime _calculateCreditCardDate(DateTime purchaseDate, AccountInfo card) {
+    DateTime invoiceDueDate;
+    if (purchaseDate.day >= card.closingDay) {
+      // Passou do fecho -> fatura do mês seguinte
+      final nextMonth = _addMonths(purchaseDate, 1);
+      final daysInMonth = DateTime(nextMonth.year, nextMonth.month + 1, 0).day;
+      final dueDay = min(card.dueDay, daysInMonth);
+      invoiceDueDate = DateTime(nextMonth.year, nextMonth.month, dueDay);
+    } else {
+      // Antes do fecho -> fatura do próprio mês
+      final daysInMonth = DateTime(purchaseDate.year, purchaseDate.month + 1, 0).day;
+      final dueDay = min(card.dueDay, daysInMonth);
+      invoiceDueDate = DateTime(purchaseDate.year, purchaseDate.month, dueDay);
+    }
+    return invoiceDueDate;
+  }
+
   void _showNewAccountDialog() {
-    final accController = TextEditingController();
+    final nameCtrl = TextEditingController();
+    bool isCreditCard = false;
+    int closingDay = 25;
+    int dueDay = 5;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Nova Conta ou Cartão'),
-        content: TextField(
-          controller: accController,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Nome (ex: Nubank, Cartão XP)', border: OutlineInputBorder()),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () {
-              final text = accController.text.trim();
-              if (text.isNotEmpty) {
-                widget.onAccountCreated(text);
-                setState(() => _selectedAccount = text);
-                Navigator.of(ctx).pop();
-              }
-            },
-            child: const Text('Adicionar'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Nova Conta ou Cartão'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Nome (ex: Nubank, Cartão XP)', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('É Cartão de Crédito?'),
+                  value: isCreditCard,
+                  onChanged: (val) => setDialogState(() => isCreditCard = val),
+                ),
+                if (isCreditCard) ...[
+                  Row(
+                    children: [
+                      const Text('Dia Fechamento: '),
+                      const Spacer(),
+                      DropdownButton<int>(
+                        value: closingDay,
+                        items: List.generate(31, (i) => i + 1).map((d) => DropdownMenuItem(value: d, child: Text('$d'))).toList(),
+                        onChanged: (val) => setDialogState(() => closingDay = val ?? 1),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      const Text('Dia Vencimento: '),
+                      const Spacer(),
+                      DropdownButton<int>(
+                        value: dueDay,
+                        items: List.generate(31, (i) => i + 1).map((d) => DropdownMenuItem(value: d, child: Text('$d'))).toList(),
+                        onChanged: (val) => setDialogState(() => dueDay = val ?? 10),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
           ),
-        ],
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
+            ElevatedButton(
+              onPressed: () async {
+                final text = nameCtrl.text.trim();
+                if (text.isNotEmpty) {
+                  final info = AccountInfo(name: text, isCreditCard: isCreditCard, closingDay: closingDay, dueDay: dueDay);
+                  await DBHelper.instance.saveAccountMeta(info);
+                  widget.onAccountCreated(text);
+                  setState(() => _selectedAccount = text);
+                  Navigator.of(ctx).pop();
+                }
+              },
+              child: const Text('Adicionar'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1137,6 +1331,17 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
 
     final type = _formMode == FormMode.income ? TransactionType.income : TransactionType.expense;
 
+    // Verifica se a conta é cartão de crédito e ajusta a data para a data de fatura correspondente
+    final currentCardMeta = widget.availableAccounts.firstWhere(
+      (a) => a.name == _selectedAccount,
+      orElse: () => AccountInfo(name: _selectedAccount),
+    );
+
+    DateTime effectiveDate = _chosenDate;
+    if (type == TransactionType.expense && currentCardMeta.isCreditCard && !isEdit) {
+      effectiveDate = _calculateCreditCardDate(_chosenDate, currentCardMeta);
+    }
+
     if (isEdit) {
       final item = TransactionItem(
         id: widget.existingItem!.id,
@@ -1156,7 +1361,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       if (_isRecurring) {
         final items = <TransactionItem>[];
         for (int i = 0; i < 24; i++) {
-          final recurDate = _addMonths(_chosenDate, i);
+          final recurDate = _addMonths(effectiveDate, i);
           items.add(
             TransactionItem(
               title: title,
@@ -1178,7 +1383,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
 
         final items = <TransactionItem>[];
         for (int i = 1; i <= _installmentsCount; i++) {
-          final installmentDate = _addMonths(_chosenDate, i - 1);
+          final installmentDate = _addMonths(effectiveDate, i - 1);
           items.add(
             TransactionItem(
               title: '$title ($i/$_installmentsCount)',
@@ -1197,7 +1402,7 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
         final item = TransactionItem(
           title: title,
           amount: rawAmount,
-          date: _chosenDate,
+          date: effectiveDate,
           category: category,
           account: _selectedAccount,
           isCompleted: _isCompleted,
@@ -1284,16 +1489,16 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: widget.availableAccounts.contains(_selectedAccount)
+                        value: widget.availableAccounts.any((a) => a.name == _selectedAccount)
                             ? _selectedAccount
-                            : widget.availableAccounts.first,
+                            : widget.availableAccounts.first.name,
                         decoration: const InputDecoration(
                           labelText: 'Conta Origem (Sai)',
                           border: OutlineInputBorder(),
                           contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         ),
                         items: widget.availableAccounts.map((acc) {
-                          return DropdownMenuItem<String>(value: acc, child: Text(acc, style: const TextStyle(fontSize: 12)));
+                          return DropdownMenuItem<String>(value: acc.name, child: Text(acc.name, style: const TextStyle(fontSize: 12)));
                         }).toList(),
                         onChanged: (val) {
                           if (val != null) setState(() => _selectedAccount = val);
@@ -1303,16 +1508,16 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: widget.availableAccounts.contains(_destinationAccount)
+                        value: widget.availableAccounts.any((a) => a.name == _destinationAccount)
                             ? _destinationAccount
-                            : widget.availableAccounts.last,
+                            : widget.availableAccounts.last.name,
                         decoration: const InputDecoration(
                           labelText: 'Conta Destino (Entra)',
                           border: OutlineInputBorder(),
                           contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         ),
                         items: widget.availableAccounts.map((acc) {
-                          return DropdownMenuItem<String>(value: acc, child: Text(acc, style: const TextStyle(fontSize: 12)));
+                          return DropdownMenuItem<String>(value: acc.name, child: Text(acc.name, style: const TextStyle(fontSize: 12)));
                         }).toList(),
                         onChanged: (val) {
                           if (val != null) setState(() => _destinationAccount = val);
@@ -1326,16 +1531,16 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: widget.availableAccounts.contains(_selectedAccount)
+                        value: widget.availableAccounts.any((a) => a.name == _selectedAccount)
                             ? _selectedAccount
-                            : widget.availableAccounts.first,
+                            : widget.availableAccounts.first.name,
                         decoration: const InputDecoration(
                           labelText: 'Conta ou Cartão',
                           border: OutlineInputBorder(),
                           contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         ),
                         items: widget.availableAccounts.map((acc) {
-                          return DropdownMenuItem<String>(value: acc, child: Text(acc));
+                          return DropdownMenuItem<String>(value: acc.name, child: Text(acc.name));
                         }).toList(),
                         onChanged: (val) {
                           if (val != null) setState(() => _selectedAccount = val);
