@@ -1,7 +1,7 @@
 name: finance_app
 description: "App de Controle Financeiro Offline - Sou Mais Controlado"
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.2.0+3
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -15,6 +15,8 @@ dependencies:
   local_auth: ^2.2.0
   path_provider: ^2.1.2
   quick_actions: ^1.1.0
+  pdf: ^3.10.8
+  printing: ^5.13.2
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1
