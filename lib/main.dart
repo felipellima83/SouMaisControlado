@@ -10,6 +10,7 @@ import 'package:quick_actions/quick_actions.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:file_picker/file_picker.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
@@ -86,7 +87,7 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> _authenticate() async {
     try {
       final authenticated = await _auth.authenticate(
-        localizedReason: 'Autentique-se para aceder ao Sou Mais Controlado',
+        localizedReason: 'Autentique-se para acessar o Sou Mais Controlado',
         options: const AuthenticationOptions(
           biometricOnly: false,
           stickyAuth: true,
@@ -119,7 +120,7 @@ class _AuthGateState extends State<AuthGate> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Aplicação bloqueada para sua privacidade.',
+                'Aplicativo bloqueado para sua privacidade.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey),
               ),
@@ -181,7 +182,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Backup automático executado entre as 22h e as 06h
   Future<void> _runAutomaticNightlyBackup() async {
     final now = DateTime.now();
     final isNightWindow = (now.hour >= 22 || now.hour < 6);
@@ -223,7 +223,6 @@ class _HomeScreenState extends State<HomeScreen> {
       final data = await DBHelper.instance.getAllTransactions();
       var meta = await DBHelper.instance.getAccountsMeta();
 
-      // Garante sincronização se existirem contas antigas não registadas nos metadados
       final existingNames = meta.map((m) => m.name).toSet();
       for (final t in data) {
         if (!existingNames.contains(t.account)) {
@@ -262,7 +261,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
-  // Agrupamento por dia em ordem crescente (do dia 1º até ao fim do mês)
   Map<DateTime, List<TransactionItem>> get _groupedTransactions {
     final Map<DateTime, List<TransactionItem>> map = {};
     final list = [..._filteredTransactions];
@@ -594,7 +592,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Configuração da Pasta de Backup Automático
+  // Diálogo para escolha visual da pasta de backup automático
   void _showBackupFolderDialog() async {
     final currentCustom = await DBHelper.instance.getSetting('backup_custom_path');
     final defaultDir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
@@ -603,44 +601,72 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Pasta de Backup Automático'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'O backup automático executa todas as noites (22h-06h). Pode personalizar a pasta de destino abaixo:',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctrl,
-              decoration: const InputDecoration(labelText: 'Caminho no Dispositivo', border: OutlineInputBorder()),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Pasta de Backup Automático'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'O backup automático executa todas as noites (22h-06h). Escolha a pasta de destino abaixo:',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: ctrl,
+                readOnly: true,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Pasta Selecionada',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.folder_open),
+                label: const Text('Selecionar Pasta'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(42),
+                ),
+                onPressed: () async {
+                  try {
+                    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                    if (selectedDirectory != null) {
+                      setDialogState(() {
+                        ctrl.text = selectedDirectory;
+                      });
+                    }
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Erro ao abrir seletor: $e')),
+                    );
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
+            ElevatedButton(
+              onPressed: () async {
+                final path = ctrl.text.trim();
+                if (path.isNotEmpty) {
+                  await DBHelper.instance.setSetting('backup_custom_path', path);
+                  if (mounted) Navigator.of(ctx).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Pasta de backup guardada com sucesso!')),
+                  );
+                }
+              },
+              child: const Text('Salvar'),
             ),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () async {
-              final path = ctrl.text.trim();
-              if (path.isNotEmpty) {
-                await DBHelper.instance.setSetting('backup_custom_path', path);
-                if (mounted) Navigator.of(ctx).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Caminho de backup guardado com sucesso!')),
-                );
-              }
-            },
-            child: const Text('Salvar'),
-          ),
-        ],
       ),
     );
   }
 
-  // Exportação formatada em PDF
   Future<void> _exportMonthPDF() async {
     final pdf = pw.Document();
     final formatCurrency = NumberFormat.simpleCurrency(locale: 'pt_BR');
@@ -928,7 +954,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(fontSize: 11.5, color: Colors.grey.shade400),
                               ),
                             ),
-                            // Valor com sinal (+ ou -) SEM o ícone de check duplicado à direita
                             Text(
                               '${isIncome ? '+' : '-'} ${item.amount.toStringAsFixed(2).replaceAll('.', ',')}',
                               style: TextStyle(
@@ -1184,17 +1209,14 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
     return DateTime(destYear, destMonth, destDay, date.hour, date.minute, date.second);
   }
 
-  // Calcula a data de fatura com base no fecho e vencimento
   DateTime _calculateCreditCardDate(DateTime purchaseDate, AccountInfo card) {
     DateTime invoiceDueDate;
     if (purchaseDate.day >= card.closingDay) {
-      // Passou do fecho -> fatura do mês seguinte
       final nextMonth = _addMonths(purchaseDate, 1);
       final daysInMonth = DateTime(nextMonth.year, nextMonth.month + 1, 0).day;
       final dueDay = min(card.dueDay, daysInMonth);
       invoiceDueDate = DateTime(nextMonth.year, nextMonth.month, dueDay);
     } else {
-      // Antes do fecho -> fatura do próprio mês
       final daysInMonth = DateTime(purchaseDate.year, purchaseDate.month + 1, 0).day;
       final dueDay = min(card.dueDay, daysInMonth);
       invoiceDueDate = DateTime(purchaseDate.year, purchaseDate.month, dueDay);
@@ -1331,7 +1353,6 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
 
     final type = _formMode == FormMode.income ? TransactionType.income : TransactionType.expense;
 
-    // Verifica se a conta é cartão de crédito e ajusta a data para a data de fatura correspondente
     final currentCardMeta = widget.availableAccounts.firstWhere(
       (a) => a.name == _selectedAccount,
       orElse: () => AccountInfo(name: _selectedAccount),
