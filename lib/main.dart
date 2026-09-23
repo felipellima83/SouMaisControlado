@@ -9,8 +9,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:quick_actions/quick_actions.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:share_plus/share_plus.dart';
-import 'package:file_picker/file_picker.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
@@ -593,7 +591,104 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Diálogo com Seletor Visual de Pasta e Atalhos
+  // Explorador visual nativo de pastas
+  void _openFolderExplorerDialog(Function(String) onFolderSelected) async {
+    Directory currentDir = Directory('/storage/emulated/0');
+    if (!currentDir.existsSync()) {
+      currentDir = await getApplicationDocumentsDirectory();
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setExplorerState) {
+          List<FileSystemEntity> subEntities = [];
+          try {
+            subEntities = currentDir.listSync().whereType<Directory>().toList();
+            subEntities.sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
+          } catch (_) {}
+
+          return AlertDialog(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Selecione a Pasta', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(
+                  currentDir.path,
+                  style: const TextStyle(fontSize: 11, color: Colors.tealAccent),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 320,
+              child: Column(
+                children: [
+                  if (currentDir.parent.path != currentDir.path && currentDir.path != '/storage/emulated/0')
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.arrow_upward, color: Colors.orangeAccent),
+                      title: const Text('.. (Voltar pasta acima)', style: TextStyle(fontWeight: FontWeight.bold)),
+                      onTap: () {
+                        setExplorerState(() {
+                          currentDir = currentDir.parent;
+                        });
+                      },
+                    ),
+                  Expanded(
+                    child: subEntities.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Nenhuma subpasta encontrada.\nVocê pode confirmar esta pasta.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: subEntities.length,
+                            itemBuilder: (context, idx) {
+                              final dir = subEntities[idx] as Directory;
+                              final dirName = dir.path.split('/').last;
+                              return ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.folder, color: Colors.teal),
+                                title: Text(dirName, style: const TextStyle(fontSize: 13)),
+                                onTap: () {
+                                  setExplorerState(() {
+                                    currentDir = dir;
+                                  });
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.check),
+                label: const Text('Confirmar Esta Pasta'),
+                onPressed: () {
+                  onFolderSelected(currentDir.path);
+                  Navigator.of(ctx).pop();
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // Diálogo da Pasta de Backup Automático
   void _showBackupFolderDialog() async {
     final currentCustom = await DBHelper.instance.getSetting('backup_custom_path');
     final defaultDir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
@@ -611,7 +706,7 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'O backup executa automaticamente entre as 22h e as 06h. Escolha a pasta de destino abaixo:',
+                  'O backup executa automaticamente todas as noites (22h-06h). Escolha a pasta abaixo:',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 14),
@@ -626,20 +721,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 10),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.folder_open),
-                  label: const Text('Selecionar Pasta'),
+                  label: const Text('Navegar pelas Pastas'),
                   style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(42)),
-                  onPressed: () async {
-                    try {
-                      String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-                      if (selectedDirectory != null) {
-                        setDialogState(() {
-                          ctrl.text = selectedDirectory;
-                        });
-                      }
-                    } catch (_) {}
+                  onPressed: () {
+                    _openFolderExplorerDialog((chosenPath) {
+                      setDialogState(() {
+                        ctrl.text = chosenPath;
+                      });
+                    });
                   },
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
+                const Text('Atalhos rápidos:', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
                   children: [
@@ -693,7 +787,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Exportação em PDF puro e compartilhamento nativo
+  // Exportação em PDF (Dart Puro, sem C++ / CMake)
   Future<void> _exportMonthPDF() async {
     final pdf = pw.Document();
     final formatCurrency = NumberFormat.simpleCurrency(locale: 'pt_BR');
@@ -755,16 +849,44 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
-    final dir = await getTemporaryDirectory();
-    final fileName = 'Extrato_Financas_${DateFormat('yyyy_MM').format(_selectedMonth)}.pdf';
-    final file = File('${dir.path}/$fileName');
-    await file.writeAsBytes(await pdf.save());
+    try {
+      Directory? targetDir;
+      final customPath = await DBHelper.instance.getSetting('backup_custom_path');
+      if (customPath != null && Directory(customPath).existsSync()) {
+        targetDir = Directory(customPath);
+      } else {
+        final downloadDir = Directory('/storage/emulated/0/Download');
+        if (downloadDir.existsSync()) {
+          targetDir = downloadDir;
+        } else {
+          targetDir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
+        }
+      }
 
-    // Abre a folha de compartilhamento/impressão nativa do Android
-    await Share.shareXFiles(
-      [XFile(file.path, mimeType: 'application/pdf', name: fileName)],
-      subject: 'Extrato Mensal - $monthTitle',
-    );
+      final fileName = 'Extrato_Financas_${DateFormat('yyyy_MM').format(_selectedMonth)}.pdf';
+      final file = File('${targetDir.path}/$fileName');
+      await file.writeAsBytes(await pdf.save());
+
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('PDF Gerado com Sucesso!'),
+          content: Text('O arquivo do extrato mensal foi salvo em:\n\n${file.path}'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao salvar PDF: $e')),
+      );
+    }
   }
 
   Future<void> _exportBackup(String format) async {
