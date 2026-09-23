@@ -9,7 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:quick_actions/quick_actions.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
@@ -261,6 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
+  // Agrupamento por dia em ordem crescente (dia 1º ao fim do mês)
   Map<DateTime, List<TransactionItem>> get _groupedTransactions {
     final Map<DateTime, List<TransactionItem>> map = {};
     final list = [..._filteredTransactions];
@@ -592,7 +593,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Diálogo para escolha visual da pasta de backup automático
+  // Diálogo com Seletor Visual de Pasta e Atalhos
   void _showBackupFolderDialog() async {
     final currentCustom = await DBHelper.instance.getSetting('backup_custom_path');
     final defaultDir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
@@ -604,47 +605,72 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Pasta de Backup Automático'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'O backup automático executa todas as noites (22h-06h). Escolha a pasta de destino abaixo:',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: ctrl,
-                readOnly: true,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: 'Pasta Selecionada',
-                  border: OutlineInputBorder(),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'O backup executa automaticamente entre as 22h e as 06h. Escolha a pasta de destino abaixo:',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.folder_open),
-                label: const Text('Selecionar Pasta'),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(42),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: ctrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Pasta Selecionada',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-                onPressed: () async {
-                  try {
-                    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-                    if (selectedDirectory != null) {
-                      setDialogState(() {
-                        ctrl.text = selectedDirectory;
-                      });
-                    }
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Erro ao abrir seletor: $e')),
-                    );
-                  }
-                },
-              ),
-            ],
+                const SizedBox(height: 10),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('Selecionar Pasta'),
+                  style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(42)),
+                  onPressed: () async {
+                    try {
+                      String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                      if (selectedDirectory != null) {
+                        setDialogState(() {
+                          ctrl.text = selectedDirectory;
+                        });
+                      }
+                    } catch (_) {}
+                  },
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    ActionChip(
+                      label: const Text('Downloads', style: TextStyle(fontSize: 11)),
+                      onPressed: () {
+                        setDialogState(() {
+                          ctrl.text = '/storage/emulated/0/Download';
+                        });
+                      },
+                    ),
+                    ActionChip(
+                      label: const Text('Documentos', style: TextStyle(fontSize: 11)),
+                      onPressed: () {
+                        setDialogState(() {
+                          ctrl.text = '/storage/emulated/0/Documents';
+                        });
+                      },
+                    ),
+                    ActionChip(
+                      label: const Text('Padrão', style: TextStyle(fontSize: 11)),
+                      onPressed: () {
+                        setDialogState(() {
+                          ctrl.text = defaultDir.path;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancelar')),
@@ -655,7 +681,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   await DBHelper.instance.setSetting('backup_custom_path', path);
                   if (mounted) Navigator.of(ctx).pop();
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Pasta de backup guardada com sucesso!')),
+                    const SnackBar(content: Text('Pasta de backup salva com sucesso!')),
                   );
                 }
               },
@@ -667,6 +693,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Exportação em PDF puro e compartilhamento nativo
   Future<void> _exportMonthPDF() async {
     final pdf = pw.Document();
     final formatCurrency = NumberFormat.simpleCurrency(locale: 'pt_BR');
@@ -728,9 +755,15 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-      name: 'Extrato_Financas_${DateFormat('yyyy_MM').format(_selectedMonth)}.pdf',
+    final dir = await getTemporaryDirectory();
+    final fileName = 'Extrato_Financas_${DateFormat('yyyy_MM').format(_selectedMonth)}.pdf';
+    final file = File('${dir.path}/$fileName');
+    await file.writeAsBytes(await pdf.save());
+
+    // Abre a folha de compartilhamento/impressão nativa do Android
+    await Share.shareXFiles(
+      [XFile(file.path, mimeType: 'application/pdf', name: fileName)],
+      subject: 'Extrato Mensal - $monthTitle',
     );
   }
 
