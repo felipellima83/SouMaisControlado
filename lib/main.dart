@@ -23,10 +23,23 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('pt_BR', null);
 
-  await Supabase.initialize(
-    url: _supabaseUrl,
-    anonKey: _supabaseAnonKey,
-  );
+  String? initError;
+  final cleanUrl = _supabaseUrl.trim();
+  final cleanKey = _supabaseAnonKey.trim();
+
+  if (cleanUrl.isEmpty || cleanKey.isEmpty) {
+    initError =
+        'Chaves do Supabase não carregadas no build (URL vazia: ${cleanUrl.isEmpty}, Key vazia: ${cleanKey.isEmpty}).';
+  } else {
+    try {
+      await Supabase.initialize(
+        url: cleanUrl,
+        anonKey: cleanKey,
+      );
+    } catch (e) {
+      initError = 'Erro ao inicializar Supabase: $e';
+    }
+  }
 
   if (!kIsWeb) {
     const quickActions = QuickActions();
@@ -43,11 +56,12 @@ void main() async {
     ]);
   }
 
-  runApp(const FinanceApp());
+  runApp(FinanceApp(initError: initError));
 }
 
 class FinanceApp extends StatelessWidget {
-  const FinanceApp({super.key});
+  final String? initError;
+  const FinanceApp({super.key, this.initError});
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +73,20 @@ class FinanceApp extends StatelessWidget {
         colorSchemeSeed: Colors.teal,
         brightness: Brightness.dark,
       ),
-      home: const AuthGate(),
+      home: initError != null
+          ? Scaffold(
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: SelectableText(
+                    initError!,
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            )
+          : const AuthGate(),
     );
   }
 }
