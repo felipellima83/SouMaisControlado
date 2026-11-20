@@ -59,6 +59,7 @@ jobs:
         with:
           name: app-financeiro-online-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 3
 
   build_and_deploy_web:
     runs-on: ubuntu-latest
