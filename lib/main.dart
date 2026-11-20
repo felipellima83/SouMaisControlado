@@ -16,6 +16,7 @@ import 'models/transaction_model.dart';
 import 'services/db_helper.dart';
 
 String? globalShortcutType;
+bool isUsingCustomServer = false;
 
 const String _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 const String _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
@@ -24,9 +25,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('pt_BR', null);
 
+  final prefs = await SharedPreferences.getInstance();
+  final customUrl = prefs.getString('custom_supabase_url')?.trim() ?? '';
+  final customKey = prefs.getString('custom_supabase_key')?.trim() ?? '';
+
+  isUsingCustomServer = customUrl.isNotEmpty && customKey.isNotEmpty;
+
   String? initError;
-  final cleanUrl = _supabaseUrl.trim();
-  final cleanKey = _supabaseAnonKey.trim();
+  final cleanUrl = isUsingCustomServer ? customUrl : _supabaseUrl.trim();
+  final cleanKey = isUsingCustomServer ? customKey : _supabaseAnonKey.trim();
 
   if (cleanUrl.isEmpty || cleanKey.isEmpty) {
     initError =
@@ -76,13 +83,29 @@ class FinanceApp extends StatelessWidget {
       ),
       home: initError != null
           ? Scaffold(
-              body: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: SelectableText(
-                    initError!,
-                    style: const TextStyle(color: Colors.redAccent, fontSize: 16),
-                    textAlign: TextAlign.center,
+              body: Builder(
+                builder: (ctx) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SelectableText(
+                          initError!,
+                          style: const TextStyle(
+                              color: Colors.redAccent, fontSize: 16),
+                          textAlign: TextAlign.center,
+                        ),
+                        if (isUsingCustomServer) ...[
+                          const SizedBox(height: 20),
+                          ElevatedButton.icon(
+                            onPressed: () => _abrirConfigServidorProprio(ctx),
+                            icon: const Icon(Icons.dns_outlined),
+                            label: const Text('Corrigir Servidor Próprio'),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -316,6 +339,27 @@ class _LoginScreenState extends State<LoginScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text('Entrar'),
+                ),
+                const SizedBox(height: 16),
+                TextButton.icon(
+                  onPressed: () => _abrirConfigServidorProprio(context),
+                  icon: Icon(
+                    Icons.dns_outlined,
+                    size: 18,
+                    color:
+                        isUsingCustomServer ? Colors.greenAccent : Colors.grey,
+                  ),
+                  label: Text(
+                    isUsingCustomServer
+                        ? 'Usando Servidor Próprio (Alterar)'
+                        : 'Configurar Servidor Próprio (Supabase)',
+                    style: TextStyle(
+                      color: isUsingCustomServer
+                          ? Colors.greenAccent
+                          : Colors.grey,
+                      fontSize: 13,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -2070,4 +2114,106 @@ class _TransactionFormModalState extends State<TransactionFormModal> {
       ),
     );
   }
+}
+
+Future<void> _abrirConfigServidorProprio(BuildContext context) async {
+  final prefs = await SharedPreferences.getInstance();
+  final urlCtrl = TextEditingController(
+    text: prefs.getString('custom_supabase_url') ?? '',
+  );
+  final keyCtrl = TextEditingController(
+    text: prefs.getString('custom_supabase_key') ?? '',
+  );
+
+  if (!context.mounted) return;
+
+  await showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Servidor Supabase Próprio'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Informe a URL e a Publishable Key do seu próprio projeto Supabase. '
+              'Deixe em branco para usar o servidor padrão.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: urlCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Supabase URL',
+                hintText: 'https://xxxxx.supabase.co',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: keyCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Publishable / Anon Key',
+                hintText: 'sb_publishable_...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        if (isUsingCustomServer)
+          TextButton(
+            onPressed: () async {
+              await prefs.remove('custom_supabase_url');
+              await prefs.remove('custom_supabase_key');
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Servidor padrão restaurado. Recarregue a página (F5) ou reabra o app.',
+                    ),
+                  ),
+                );
+              }
+            },
+            child: const Text('Restaurar Padrão',
+                style: TextStyle(color: Colors.redAccent)),
+          ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancelar'),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final url = urlCtrl.text.trim();
+            final key = keyCtrl.text.trim();
+
+            if (url.isEmpty || key.isEmpty) {
+              await prefs.remove('custom_supabase_url');
+              await prefs.remove('custom_supabase_key');
+            } else {
+              await prefs.setString('custom_supabase_url', url);
+              await prefs.setString('custom_supabase_key', key);
+            }
+
+            if (ctx.mounted) Navigator.pop(ctx);
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Configuração salva! Recarregue a página (F5) ou reabra o app para conectar.',
+                  ),
+                  duration: Duration(seconds: 5),
+                ),
+              );
+            }
+          },
+          child: const Text('Salvar'),
+        ),
+      ],
+    ),
+  );
 }
