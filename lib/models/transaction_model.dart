@@ -23,31 +23,44 @@ class TransactionItem {
     required this.type,
   });
 
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
+  Map<String, dynamic> toMap({bool includeId = false}) {
+    final map = <String, dynamic>{
       'title': title,
       'amount': amount,
       'date': date.toIso8601String(),
       'category': category,
       'account': account,
-      'groupId': groupId,
-      'isCompleted': isCompleted ? 1 : 0,
-      'type': type == TransactionType.income ? 'income' : 'expense',
+      'group_id': groupId,
+      'is_completed': isCompleted,
+      'type': type.name,
     };
+    if (includeId && id != null) {
+      map['id'] = id;
+    }
+    return map;
   }
 
   factory TransactionItem.fromMap(Map<String, dynamic> map) {
+    final rawCompleted = map['is_completed'] ?? map['isCompleted'];
+    bool completed = true;
+    if (rawCompleted is bool) {
+      completed = rawCompleted;
+    } else if (rawCompleted is int) {
+      completed = rawCompleted == 1;
+    }
+
     return TransactionItem(
-      id: map['id'] as int?,
-      title: map['title'] as String,
+      id: map['id'] is int ? map['id'] as int : int.tryParse('${map['id']}'),
+      title: map['title'] as String? ?? '',
       amount: (map['amount'] as num).toDouble(),
-      date: DateTime.parse(map['date'] as String),
-      category: map['category'] as String,
-      account: (map['account'] as String?) ?? 'Conta Principal',
-      groupId: map['groupId'] as String?,
-      isCompleted: (map['isCompleted'] as int? ?? 1) == 1,
-      type: map['type'] == 'income' ? TransactionType.income : TransactionType.expense,
+      date: DateTime.parse(map['date'] as String).toLocal(),
+      category: map['category'] as String? ?? 'Outros',
+      account: map['account'] as String? ?? 'Conta Principal',
+      groupId: (map['group_id'] ?? map['groupId']) as String?,
+      isCompleted: completed,
+      type: (map['type'] as String) == 'income'
+          ? TransactionType.income
+          : TransactionType.expense,
     );
   }
 }
