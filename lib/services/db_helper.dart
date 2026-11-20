@@ -1,5 +1,4 @@
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/transaction_model.dart';
 
 class AccountInfo {
@@ -15,238 +14,151 @@ class AccountInfo {
     this.dueDay = 10,
   });
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toMap(String userId) {
     return {
+      'user_id': userId,
       'name': name,
-      'isCreditCard': isCreditCard ? 1 : 0,
-      'closingDay': closingDay,
-      'dueDay': dueDay,
+      'is_credit_card': isCreditCard,
+      'closing_day': closingDay,
+      'due_day': dueDay,
     };
   }
 
   factory AccountInfo.fromMap(Map<String, dynamic> map) {
+    final rawCard = map['is_credit_card'] ?? map['isCreditCard'];
+    final isCard = rawCard is bool ? rawCard : (rawCard == 1);
+
     return AccountInfo(
       name: map['name'] as String,
-      isCreditCard: (map['isCreditCard'] as int? ?? 0) == 1,
-      closingDay: map['closingDay'] as int? ?? 1,
-      dueDay: map['dueDay'] as int? ?? 10,
+      isCreditCard: isCard,
+      closingDay: (map['closing_day'] ?? map['closingDay'] ?? 1) as int,
+      dueDay: (map['due_day'] ?? map['dueDay'] ?? 10) as int,
     );
   }
 }
 
 class DBHelper {
   static final DBHelper instance = DBHelper._init();
-  static Database? _database;
-
   DBHelper._init();
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDB('finance.db');
-    return _database!;
-  }
-
-  Future<Database> _initDB(String filePath) async {
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, filePath);
-
-    return await openDatabase(
-      path,
-      version: 5,
-      onCreate: _createDB,
-      onUpgrade: _upgradeDB,
-    );
-  }
-
-  Future _createDB(Database db, int version) async {
-    await db.execute('''
-      CREATE TABLE transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        amount REAL NOT NULL,
-        date TEXT NOT NULL,
-        category TEXT NOT NULL,
-        account TEXT NOT NULL DEFAULT 'Conta Principal',
-        groupId TEXT,
-        isCompleted INTEGER NOT NULL DEFAULT 1,
-        type TEXT NOT NULL
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE accounts_meta (
-        name TEXT PRIMARY KEY,
-        isCreditCard INTEGER NOT NULL DEFAULT 0,
-        closingDay INTEGER NOT NULL DEFAULT 1,
-        dueDay INTEGER NOT NULL DEFAULT 10
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE app_settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-    ''');
-
-    // Contas iniciais padrão
-    await db.insert('accounts_meta', AccountInfo(name: 'Conta Principal').toMap());
-    await db.insert('accounts_meta', AccountInfo(name: 'Carteira / Dinheiro').toMap());
-    await db.insert('accounts_meta', AccountInfo(name: 'Cartão de Crédito', isCreditCard: true, closingDay: 25, dueDay: 5).toMap());
-  }
-
-  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
-      await db.execute("ALTER TABLE transactions ADD COLUMN account TEXT NOT NULL DEFAULT 'Conta Principal'");
-    }
-    if (oldVersion < 3) {
-      await db.execute("ALTER TABLE transactions ADD COLUMN groupId TEXT");
-    }
-    if (oldVersion < 4) {
-      await db.execute("ALTER TABLE transactions ADD COLUMN isCompleted INTEGER NOT NULL DEFAULT 1");
-    }
-    if (oldVersion < 5) {
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS accounts_meta (
-          name TEXT PRIMARY KEY,
-          isCreditCard INTEGER NOT NULL DEFAULT 0,
-          closingDay INTEGER NOT NULL DEFAULT 1,
-          dueDay INTEGER NOT NULL DEFAULT 10
-        )
-      ''');
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS app_settings (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL
-        )
-      ''');
-    }
-  }
-
-  // Definições gerais da aplicação
-  Future<void> setSetting(String key, String value) async {
-    final db = await instance.database;
-    await db.insert(
-      'app_settings',
-      {'key': key, 'value': value},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
-
-  Future<String?> getSetting(String key) async {
-    final db = await instance.database;
-    final res = await db.query('app_settings', where: 'key = ?', whereArgs: [key]);
-    if (res.isNotEmpty) {
-      return res.first['value'] as String?;
-    }
-    return null;
-  }
+  SupabaseClient get _client => Supabase.instance.client;
+  String get _userId => _client.auth.currentUser!.id;
 
   // Gestão de Contas e Cartões
   Future<List<AccountInfo>> getAccountsMeta() async {
-    final db = await instance.database;
-    final res = await db.query('accounts_meta');
-    return res.map((m) => AccountInfo.fromMap(m)).toList();
+    final res = await _client
+        .from('accounts_meta')
+        .select()
+        .order('name', ascending: true);
+
+    final list = (res as List)
+        .map((m) => AccountInfo.fromMap(Map<String, dynamic>.from(m)))
+        .toList();
+
+    // Cria contas padrão no primeiro acesso do usuário
+    if (list.isEmpty) {
+      final defaults = [
+        AccountInfo(name: 'Conta Principal'),
+        AccountInfo(name: 'Carteira / Dinheiro'),
+        AccountInfo(
+          name: 'Cartão de Crédito',
+          isCreditCard: true,
+          closingDay: 25,
+          dueDay: 5,
+        ),
+      ];
+      for (final acc in defaults) {
+        await saveAccountMeta(acc);
+      }
+      return defaults;
+    }
+
+    return list;
   }
 
   Future<void> saveAccountMeta(AccountInfo info) async {
-    final db = await instance.database;
-    await db.insert(
-      'accounts_meta',
-      info.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await _client
+        .from('accounts_meta')
+        .upsert(info.toMap(_userId), onConflict: 'user_id,name');
   }
 
-  Future<int> insertTransaction(TransactionItem item) async {
-    final db = await instance.database;
-    return await db.insert('transactions', item.toMap());
+  // Transações
+  Future<List<TransactionItem>> getAllTransactions() async {
+    final res = await _client
+        .from('transactions')
+        .select()
+        .order('date', ascending: true);
+
+    return (res as List)
+        .map((m) => TransactionItem.fromMap(Map<String, dynamic>.from(m)))
+        .toList();
+  }
+
+  Future<void> insertTransaction(TransactionItem item) async {
+    final map = item.toMap();
+    map['user_id'] = _userId;
+    await _client.from('transactions').insert(map);
   }
 
   Future<void> insertMultipleTransactions(List<TransactionItem> items) async {
-    final db = await instance.database;
-    final batch = db.batch();
-    for (final item in items) {
-      batch.insert('transactions', item.toMap());
-    }
-    await batch.commit(noResult: true);
+    if (items.isEmpty) return;
+    final rows = items.map((item) {
+      final map = item.toMap();
+      map['user_id'] = _userId;
+      return map;
+    }).toList();
+    await _client.from('transactions').insert(rows);
   }
 
-  Future<int> updateTransaction(TransactionItem item) async {
-    final db = await instance.database;
-    return await db.update(
-      'transactions',
-      item.toMap(),
-      where: 'id = ?',
-      whereArgs: [item.id],
-    );
+  Future<void> updateTransaction(TransactionItem item) async {
+    if (item.id == null) return;
+    await _client
+        .from('transactions')
+        .update(item.toMap())
+        .eq('id', item.id!);
   }
 
-  Future<int> toggleTransactionStatus(int id, bool isCompleted) async {
-    final db = await instance.database;
-    return await db.update(
-      'transactions',
-      {'isCompleted': isCompleted ? 1 : 0},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+  Future<void> toggleTransactionStatus(int id, bool isCompleted) async {
+    await _client
+        .from('transactions')
+        .update({'is_completed': isCompleted})
+        .eq('id', id);
   }
 
-  Future<List<TransactionItem>> getAllTransactions() async {
-    final db = await instance.database;
-    final result = await db.query('transactions', orderBy: 'date ASC');
-    return result.map((json) => TransactionItem.fromMap(json)).toList();
+  Future<void> deleteTransaction(int id) async {
+    await _client.from('transactions').delete().eq('id', id);
   }
 
-  Future<int> deleteTransaction(int id) async {
-    final db = await instance.database;
-    return await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+  Future<void> deleteGroupAll(String groupId) async {
+    await _client.from('transactions').delete().eq('group_id', groupId);
   }
 
-  Future<int> deleteGroupAll(String groupId) async {
-    final db = await instance.database;
-    return await db.delete(
-      'transactions',
-      where: 'groupId = ?',
-      whereArgs: [groupId],
-    );
+  Future<void> deleteGroupFromDate(String groupId, DateTime fromDate) async {
+    await _client
+        .from('transactions')
+        .delete()
+        .eq('group_id', groupId)
+        .gte('date', fromDate.toIso8601String());
   }
 
-  Future<int> deleteGroupFromDate(String groupId, DateTime fromDate) async {
-    final db = await instance.database;
-    return await db.delete(
-      'transactions',
-      where: 'groupId = ? AND date >= ?',
-      whereArgs: [groupId, fromDate.toIso8601String()],
-    );
+  Future<void> renameAccount(String oldName, String newName) async {
+    await _client
+        .from('accounts_meta')
+        .update({'name': newName})
+        .eq('name', oldName);
+    await _client
+        .from('transactions')
+        .update({'account': newName})
+        .eq('account', oldName);
   }
 
-  Future<int> renameAccount(String oldName, String newName) async {
-    final db = await instance.database;
-    await db.rawUpdate('UPDATE accounts_meta SET name = ? WHERE name = ?', [newName, oldName]);
-    return await db.rawUpdate(
-      'UPDATE transactions SET account = ? WHERE account = ?',
-      [newName, oldName],
-    );
-  }
-
-  Future<int> deleteAccountAndTransactions(String accountName) async {
-    final db = await instance.database;
-    await db.delete('accounts_meta', where: 'name = ?', whereArgs: [accountName]);
-    return await db.delete(
-      'transactions',
-      where: 'account = ?',
-      whereArgs: [accountName],
-    );
+  Future<void> deleteAccountAndTransactions(String accountName) async {
+    await _client.from('accounts_meta').delete().eq('name', accountName);
+    await _client.from('transactions').delete().eq('account', accountName);
   }
 
   Future<void> replaceAllTransactions(List<TransactionItem> items) async {
-    final db = await instance.database;
-    await db.transaction((txn) async {
-      await txn.delete('transactions');
-      for (final item in items) {
-        await txn.insert('transactions', item.toMap());
-      }
-    });
+    await _client.from('transactions').delete().eq('user_id', _userId);
+    await insertMultipleTransactions(items);
   }
 }
